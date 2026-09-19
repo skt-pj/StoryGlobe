@@ -1,12 +1,20 @@
-const BLUE_MARBLE_URL =
-  "https://eoimages.gsfc.nasa.gov/images/imagerecords/57000/57730/land_ocean_ice_8192.png";
+const SATELLITE_SERVICE_URL =
+  "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer";
+
+const RECORD_FPS = 30;
+const PRE_ROLL_MS = 500;
+const POST_ROLL_MS = 500;
 
 const elements = {
+  app: document.getElementById("app"),
+  cesiumContainer: document.getElementById("cesiumContainer"),
   name: document.getElementById("nameInput"),
   lat: document.getElementById("latInput"),
   lon: document.getElementById("lonInput"),
   height: document.getElementById("heightInput"),
   duration: document.getElementById("durationInput"),
+  outputWidth: document.getElementById("widthInput"),
+  outputHeight: document.getElementById("heightOutputInput"),
   video: document.getElementById("videoInput"),
   play: document.getElementById("playButton"),
   home: document.getElementById("homeButton"),
@@ -19,9 +27,27 @@ const elements = {
 
 let viewer;
 let destinationMarker;
+let satelliteReady = false;
 
 function setStatus(message) {
   elements.status.textContent = message;
+}
+
+function wait(milliseconds) {
+  return new Promise((resolve) => window.setTimeout(resolve, milliseconds));
+}
+
+function waitForAnimationFrames(count = 2) {
+  return new Promise((resolve) => {
+    function next(remaining) {
+      if (remaining <= 0) {
+        resolve();
+        return;
+      }
+      window.requestAnimationFrame(() => next(remaining - 1));
+    }
+    next(count);
+  });
 }
 
 function readNumber(input, label) {
@@ -32,11 +58,21 @@ function readNumber(input, label) {
   return value;
 }
 
+function readPositiveInteger(input, label) {
+  const value = readNumber(input, label);
+  if (!Number.isInteger(value) || value <= 0) {
+    throw new Error(label + "は1以上の整数で指定してください");
+  }
+  return value;
+}
+
 function readStory() {
   const latitude = readNumber(elements.lat, "緯度");
   const longitude = readNumber(elements.lon, "経度");
   const height = readNumber(elements.height, "到着高度");
   const duration = readNumber(elements.duration, "移動時間");
+  const outputWidth = readPositiveInteger(elements.outputWidth, "出力幅");
+  const outputHeight = readPositiveInteger(elements.outputHeight, "出力高さ");
 
   if (latitude < -90 || latitude > 90) {
     throw new Error("緯度は -90〜90 で指定してください");
@@ -57,6 +93,8 @@ function readStory() {
     longitude,
     height,
     duration,
+    outputWidth,
+    outputHeight,
     videoUrl: elements.video.value.trim(),
   };
 }
@@ -115,7 +153,6 @@ function showMarker(story) {
 
 async function openVideo(story) {
   if (!story.videoUrl) {
-    setStatus("到着しました。動画URLを指定すると、そのまま動画へ遷移します");
     return;
   }
 
@@ -123,7 +160,6 @@ async function openVideo(story) {
   elements.storyVideo.src = story.videoUrl;
   elements.overlay.classList.add("visible");
   elements.overlay.setAttribute("aria-hidden", "false");
-  setStatus("動画へ遷移");
 
   try {
     await elements.storyVideo.play();
@@ -138,13 +174,11 @@ function closeVideo() {
   elements.storyVideo.load();
   elements.overlay.classList.remove("visible");
   elements.overlay.setAttribute("aria-hidden", "true");
-  setStatus("地球表示");
 }
 
 function flyToStory(story) {
   return new Promise((resolve) => {
     showMarker(story);
-    setStatus(story.name + " へ移動中…");
 
     viewer.camera.flyTo({
       destination: Cesium.Cartesian3.fromDegrees(
@@ -165,6 +199,211 @@ function flyToStory(story) {
   });
 }
 
+function getMp4MimeType() {
+  if (
+    !window.MediaRecorder ||
+    typeof MediaRecorder.isTypeSupported !== "function" ||
+    typeof HTMLCanvasElement.prototype.captureStream !== "function"
+  ) {
+    return null;
+  }
+
+  const candidates = [
+    "video/mp4;codecs=avc1.42E01E",
+    "video/mp4;codecs=avc1",
+    "video/mp4;codecs=h264",
+    "video/mp4",
+  ];
+
+  return candidates.find((type) => MediaRecorder.isTypeSupported(type)) || null;
+}
+
+function applyRecordingViewport(outputWidth, outputHeight) {
+  const aspect = outputWidth / outputHeight;
+  const viewportWidth = window.innerWidth;
+  const viewportHeight = window.innerHeight;
+  const viewportAspect = viewportWidth / viewportHeight;
+
+  let cssWidth;
+  let cssHeight;
+
+  if (viewportAspect > aspect) {
+    cssHeight = viewportHeight;
+    cssWidth = cssHeight * aspect;
+  } else {
+    cssWidth = viewportWidth;
+    cssHeight = cssWidth / aspect;
+  }
+
+  Object.assign(elements.cesiumContainer.style, {
+    inset: "auto",
+    left: "50%",
+    top: "50%",
+    width: cssWidth + "px",
+    height: cssHeight + "px",
+    transform: "translate(-50%, -50%)",
+  });
+
+  viewer.resize();
+  viewer.scene.requestRender();
+}
+
+function restoreViewerViewport() {
+  elements.cesiumContainer.removeAttribute("style");
+  viewer.resize();
+  viewer.scene.requestRender();
+}
+
+function getVisibleCreditText() {
+  const container = viewer?.cesiumWidget?.creditContainer;
+  if (!container) {
+    return "Esri World Imagery";
+  }
+
+  const text = container.innerText.replace(/\s+/g, " ").trim();
+  return text || "Esri World Imagery";
+}
+
+function drawAttribution(context, canvas) {
+  const text = getVisibleCreditText();
+  const fontSize = Math.max(14, Math.round(canvas.height * 0.014));
+  const padding = Math.max(8, Math.round(fontSize * 0.55));
+
+  context.save();
+  context.font = fontSize + "px sans-serif";
+  context.textBaseline = "bottom";
+
+  const maxWidth = canvas.width * 0.92;
+  let displayText = text;
+  while (
+    displayText.length > 8 &&
+    context.measureText(displayText).width > maxWidth
+  ) {
+    displayText = displayText.slice(0, -5);
+  }
+  if (displayText !== text) {
+    displayText += "…";
+  }
+
+  const textWidth = context.measureText(displayText).width;
+  const x = canvas.width - textWidth - padding;
+  const y = canvas.height - padding;
+
+  context.fillStyle = "rgba(0, 0, 0, 0.52)";
+  context.fillRect(
+    x - padding,
+    y - fontSize - padding / 2,
+    textWidth + padding * 2,
+    fontSize + padding
+  );
+
+  context.fillStyle = "rgba(255, 255, 255, 0.9)";
+  context.fillText(displayText, x, y);
+  context.restore();
+}
+
+function sanitizeFileName(name) {
+  const cleaned = name
+    .replace(/[\\/:*?"<>|]/g, "_")
+    .replace(/\s+/g, "_")
+    .replace(/^_+|_+$/g, "");
+
+  return cleaned || "storyglobe";
+}
+
+function downloadBlob(blob, fileName) {
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = fileName;
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+
+  window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+async function recordFlightAsMp4(story, mimeType) {
+  const outputCanvas = document.createElement("canvas");
+  outputCanvas.width = story.outputWidth;
+  outputCanvas.height = story.outputHeight;
+
+  const context = outputCanvas.getContext("2d", {
+    alpha: false,
+  });
+  if (!context) {
+    throw new Error("録画用Canvasを作成できませんでした");
+  }
+
+  viewer.scene.render();
+  context.drawImage(
+    viewer.canvas,
+    0,
+    0,
+    outputCanvas.width,
+    outputCanvas.height
+  );
+  drawAttribution(context, outputCanvas);
+
+  const stream = outputCanvas.captureStream(RECORD_FPS);
+  const chunks = [];
+  const recorder = new MediaRecorder(stream, { mimeType });
+
+  let animationFrameId = null;
+  let drawing = true;
+
+  function drawFrame() {
+    if (!drawing) {
+      return;
+    }
+
+    context.fillStyle = "#000";
+    context.fillRect(0, 0, outputCanvas.width, outputCanvas.height);
+    context.drawImage(
+      viewer.canvas,
+      0,
+      0,
+      outputCanvas.width,
+      outputCanvas.height
+    );
+    drawAttribution(context, outputCanvas);
+    animationFrameId = window.requestAnimationFrame(drawFrame);
+  }
+
+  const finished = new Promise((resolve, reject) => {
+    recorder.addEventListener("dataavailable", (event) => {
+      if (event.data && event.data.size > 0) {
+        chunks.push(event.data);
+      }
+    });
+
+    recorder.addEventListener("stop", () => {
+      resolve(new Blob(chunks, { type: mimeType }));
+    });
+
+    recorder.addEventListener("error", (event) => {
+      reject(event.error || new Error("MP4録画に失敗しました"));
+    });
+  });
+
+  drawFrame();
+  recorder.start(250);
+
+  try {
+    await wait(PRE_ROLL_MS);
+    await flyToStory(story);
+    await wait(POST_ROLL_MS);
+    recorder.stop();
+    return await finished;
+  } finally {
+    drawing = false;
+    if (animationFrameId !== null) {
+      window.cancelAnimationFrame(animationFrameId);
+    }
+    stream.getTracks().forEach((track) => track.stop());
+  }
+}
+
 async function runStory() {
   let story;
   try {
@@ -174,16 +413,49 @@ async function runStory() {
     return;
   }
 
+  if (!satelliteReady) {
+    setStatus("衛星写真の読み込みが完了していません");
+    return;
+  }
+
+  const mimeType = getMp4MimeType();
+  if (!mimeType) {
+    setStatus("このブラウザはCanvasのMP4録画に対応していません");
+    return;
+  }
+
   elements.play.disabled = true;
+  closeVideo();
+  elements.app.classList.add("recording");
 
   try {
-    await flyToStory(story);
-    setStatus(story.name + " に到着");
-    await new Promise((resolve) => setTimeout(resolve, 350));
-    await openVideo(story);
+    applyRecordingViewport(story.outputWidth, story.outputHeight);
+    setHomeView(false);
+    await waitForAnimationFrames(3);
+    await wait(350);
+
+    const mp4 = await recordFlightAsMp4(story, mimeType);
+    const fileName = sanitizeFileName(story.name) + ".mp4";
+    downloadBlob(mp4, fileName);
+
+    setStatus(
+      fileName +
+        " を " +
+        story.outputWidth +
+        "×" +
+        story.outputHeight +
+        " で出力しました"
+    );
+  } catch (error) {
+    console.error(error);
+    setStatus(error.message || "MP4出力に失敗しました");
   } finally {
+    restoreViewerViewport();
+    elements.app.classList.remove("recording");
     elements.play.disabled = false;
   }
+
+  await openVideo(story);
 }
 
 function applyQueryParameters() {
@@ -195,6 +467,8 @@ function applyQueryParameters() {
     ["lon", elements.lon],
     ["height", elements.height],
     ["duration", elements.duration],
+    ["width", elements.outputWidth],
+    ["heightPx", elements.outputHeight],
     ["video", elements.video],
   ];
 
@@ -207,24 +481,14 @@ function applyQueryParameters() {
   return params.get("autoplay") === "1";
 }
 
-async function addEarthTexture() {
-  try {
-    const provider = Cesium.SingleTileImageryProvider.fromUrl
-      ? await Cesium.SingleTileImageryProvider.fromUrl(BLUE_MARBLE_URL)
-      : new Cesium.SingleTileImageryProvider({ url: BLUE_MARBLE_URL });
+async function addSatelliteImagery() {
+  const provider = await Cesium.ArcGisMapServerImageryProvider.fromUrl(
+    SATELLITE_SERVICE_URL
+  );
 
-    viewer.imageryLayers.addImageryProvider(provider);
-    setStatus("NASA Blue Marble を読み込みました");
-  } catch (error) {
-    console.error("Blue Marble load failed:", error);
-
-    viewer.imageryLayers.addImageryProvider(
-      new Cesium.OpenStreetMapImageryProvider({
-        url: "https://tile.openstreetmap.org/",
-      })
-    );
-    setStatus("地球テクスチャの読込に失敗したため地図表示へ切替");
-  }
+  viewer.imageryLayers.addImageryProvider(provider);
+  satelliteReady = true;
+  setStatus("衛星写真を読み込みました");
 }
 
 async function initialize() {
@@ -246,6 +510,11 @@ async function initialize() {
     selectionIndicator: false,
     baseLayer: false,
     terrainProvider: new Cesium.EllipsoidTerrainProvider(),
+    contextOptions: {
+      webgl: {
+        preserveDrawingBuffer: true,
+      },
+    },
   });
 
   viewer.scene.globe.enableLighting = false;
@@ -253,7 +522,13 @@ async function initialize() {
   viewer.scene.skyAtmosphere.show = true;
 
   setHomeView(false);
-  await addEarthTexture();
+
+  try {
+    await addSatelliteImagery();
+  } catch (error) {
+    console.error("Satellite imagery load failed:", error);
+    setStatus("衛星写真の読み込みに失敗しました");
+  }
 
   const autoplay = applyQueryParameters();
 
