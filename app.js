@@ -210,7 +210,7 @@ function flyToStory(story) {
       ),
       orientation: {
         heading: Cesium.Math.toRadians(0),
-        pitch: Cesium.Math.toRadians(-72),
+        pitch: Cesium.Math.toRadians(-90),
         roll: 0,
       },
       duration: story.duration,
