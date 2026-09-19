@@ -1,28 +1,12 @@
 const SATELLITE_SERVICE_URL =
   "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer";
 const BLUE_MARBLE_URL =
-  "https://eoimages.gsfc.nasa.gov/images/imagerecords/57000/57730/land_ocean_ice_8192.png";
+  "https://eoimages.gsfc.nasa.gov/images/imagerecords/57000/57735/land_ocean_ice_cloud_2048.jpg";
 
 const RECORD_FPS = 30;
 const PRE_ROLL_MS = 500;
 const POST_ROLL_MS = 500;
 
-const REALISM_FRAGMENT_SHADER = `
-uniform sampler2D colorTexture;
-in vec2 v_textureCoordinates;
-
-void main() {
-  vec4 source = texture(colorTexture, v_textureCoordinates);
-  vec3 color = max(source.rgb, vec3(0.0));
-
-  color = (color - vec3(0.5)) * 1.04 + vec3(0.5);
-  float luma = dot(color, vec3(0.2126, 0.7152, 0.0722));
-  color = mix(vec3(luma), color, 0.94);
-  color = pow(max(color, vec3(0.0)), vec3(1.02));
-
-  out_FragColor = vec4(clamp(color, 0.0, 1.0), source.a);
-}
-`;
 
 const elements = {
   app: document.getElementById("app"),
@@ -594,10 +578,10 @@ async function addSatelliteImagery() {
 
     globalImageryLayer =
       viewer.imageryLayers.addImageryProvider(globalProvider);
-    globalImageryLayer.brightness = 0.86;
-    globalImageryLayer.contrast = 1.12;
-    globalImageryLayer.saturation = 0.86;
-    globalImageryLayer.gamma = 0.98;
+    globalImageryLayer.brightness = 1.0;
+    globalImageryLayer.contrast = 1.0;
+    globalImageryLayer.saturation = 1.0;
+    globalImageryLayer.gamma = 1.0;
   } catch (error) {
     console.warn("Blue Marble load failed:", error);
   }
@@ -609,10 +593,10 @@ async function addSatelliteImagery() {
 
   detailImageryLayer =
     viewer.imageryLayers.addImageryProvider(detailProvider);
-  detailImageryLayer.brightness = 0.86;
-  detailImageryLayer.contrast = 1.16;
-  detailImageryLayer.saturation = 0.86;
-  detailImageryLayer.gamma = 0.98;
+  detailImageryLayer.brightness = 1.0;
+  detailImageryLayer.contrast = 1.0;
+  detailImageryLayer.saturation = 1.0;
+  detailImageryLayer.gamma = 1.0;
 
   updateImageryBlend();
   viewer.camera.changed.addEventListener(updateImageryBlend);
@@ -648,16 +632,25 @@ async function initialize() {
   });
 
   viewer.scene.highDynamicRange = true;
+  viewer.scene.gamma = 2.2;
   viewer.scene.backgroundColor = Cesium.Color.BLACK;
-  viewer.scene.globe.enableLighting = true;
-  viewer.scene.globe.dynamicAtmosphereLighting = false;
-  viewer.scene.globe.dynamicAtmosphereLightingFromSun = false;
+  viewer.scene.postProcessStages.tonemapper = Cesium.Tonemapper.PBR_NEUTRAL;
+  viewer.scene.postProcessStages.exposure = 1.0;
+
+  viewer.scene.globe.enableLighting = false;
   viewer.scene.globe.showGroundAtmosphere = false;
   viewer.scene.fog.enabled = false;
 
-  viewer.scene.skyAtmosphere.show = false;
+  viewer.scene.skyAtmosphere.show = true;
+  viewer.scene.skyAtmosphere.hueShift = 0.0;
+  viewer.scene.skyAtmosphere.saturationShift = 0.0;
+  viewer.scene.skyAtmosphere.brightnessShift = 0.0;
+
   if (viewer.scene.skyBox) {
     viewer.scene.skyBox.show = false;
+  }
+  if (viewer.scene.sun) {
+    viewer.scene.sun.show = false;
   }
   if (viewer.scene.moon) {
     viewer.scene.moon.show = false;
@@ -666,13 +659,6 @@ async function initialize() {
   if (viewer.scene.postProcessStages.fxaa) {
     viewer.scene.postProcessStages.fxaa.enabled = true;
   }
-
-  viewer.scene.postProcessStages.add(
-    new Cesium.PostProcessStage({
-      name: "storyglobe-realism",
-      fragmentShader: REALISM_FRAGMENT_SHADER,
-    })
-  );
 
   setHomeView(false);
 
