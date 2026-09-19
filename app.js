@@ -1,5 +1,7 @@
 const SATELLITE_SERVICE_URL =
   "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer";
+const BLUE_MARBLE_URL =
+  "https://eoimages.gsfc.nasa.gov/images/imagerecords/57000/57730/land_ocean_ice_8192.png";
 
 const RECORD_FPS = 30;
 const PRE_ROLL_MS = 500;
@@ -13,15 +15,10 @@ void main() {
   vec4 source = texture(colorTexture, v_textureCoordinates);
   vec3 color = max(source.rgb, vec3(0.0));
 
-  color = (color - vec3(0.5)) * 1.06 + vec3(0.5);
-  color = pow(max(color, vec3(0.0)), vec3(0.96));
-
+  color = (color - vec3(0.5)) * 1.04 + vec3(0.5);
   float luma = dot(color, vec3(0.2126, 0.7152, 0.0722));
-  color = mix(vec3(luma), color, 1.04);
-
-  float edgeDistance = distance(v_textureCoordinates, vec2(0.5));
-  float vignette = 1.0 - smoothstep(0.35, 0.72, edgeDistance);
-  color *= mix(0.92, 1.0, vignette);
+  color = mix(vec3(luma), color, 0.94);
+  color = pow(max(color, vec3(0.0)), vec3(1.02));
 
   out_FragColor = vec4(clamp(color, 0.0, 1.0), source.a);
 }
@@ -49,6 +46,8 @@ const elements = {
 
 let viewer;
 let destinationMarker;
+let globalImageryLayer;
+let detailImageryLayer;
 let satelliteReady = false;
 
 function setStatus(message) {
@@ -198,24 +197,81 @@ function closeVideo() {
   elements.overlay.setAttribute("aria-hidden", "true");
 }
 
+function getNadirCameraView(story) {
+  const target = Cesium.Cartesian3.fromDegrees(
+    story.longitude,
+    story.latitude,
+    0
+  );
+  const normal = Cesium.Ellipsoid.WGS84.geodeticSurfaceNormal(
+    target,
+    new Cesium.Cartesian3()
+  );
+  const offset = Cesium.Cartesian3.multiplyByScalar(
+    normal,
+    story.height,
+    new Cesium.Cartesian3()
+  );
+  const destination = Cesium.Cartesian3.add(
+    target,
+    offset,
+    new Cesium.Cartesian3()
+  );
+  const direction = Cesium.Cartesian3.normalize(
+    Cesium.Cartesian3.subtract(
+      target,
+      destination,
+      new Cesium.Cartesian3()
+    ),
+    new Cesium.Cartesian3()
+  );
+  const localFrame = Cesium.Transforms.eastNorthUpToFixedFrame(target);
+  const northColumn = Cesium.Matrix4.getColumn(
+    localFrame,
+    1,
+    new Cesium.Cartesian4()
+  );
+  const up = Cesium.Cartesian3.normalize(
+    new Cesium.Cartesian3(
+      northColumn.x,
+      northColumn.y,
+      northColumn.z
+    ),
+    new Cesium.Cartesian3()
+  );
+
+  return {
+    target,
+    destination,
+    direction,
+    up,
+  };
+}
+
 function flyToStory(story) {
   return new Promise((resolve) => {
-    showMarker(story);
+    const view = getNadirCameraView(story);
 
     viewer.camera.flyTo({
-      destination: Cesium.Cartesian3.fromDegrees(
-        story.longitude,
-        story.latitude,
-        story.height
-      ),
+      destination: view.destination,
       orientation: {
-        heading: Cesium.Math.toRadians(0),
-        pitch: Cesium.Math.toRadians(-90),
-        roll: 0,
+        direction: view.direction,
+        up: view.up,
       },
       duration: story.duration,
       easingFunction: Cesium.EasingFunction.CUBIC_IN_OUT,
-      complete: resolve,
+      complete: () => {
+        viewer.camera.setView({
+          destination: view.destination,
+          orientation: {
+            direction: view.direction,
+            up: view.up,
+          },
+        });
+        showMarker(story);
+        viewer.scene.requestRender();
+        resolve();
+      },
       cancel: resolve,
     });
   });
@@ -503,16 +559,64 @@ function applyQueryParameters() {
   return params.get("autoplay") === "1";
 }
 
-async function addSatelliteImagery() {
-  const provider = await Cesium.ArcGisMapServerImageryProvider.fromUrl(
-    SATELLITE_SERVICE_URL
+function updateImageryBlend() {
+  if (!detailImageryLayer) {
+    return;
+  }
+
+  if (!globalImageryLayer) {
+    detailImageryLayer.alpha = 1;
+    return;
+  }
+
+  const height = viewer.camera.positionCartographic.height;
+  const globalAlpha = Cesium.Math.clamp(
+    (height - 3500000) / 6500000,
+    0,
+    1
   );
 
-  const layer = viewer.imageryLayers.addImageryProvider(provider);
-  layer.brightness = 0.92;
-  layer.contrast = 1.12;
-  layer.saturation = 0.9;
-  layer.gamma = 0.94;
+  globalImageryLayer.alpha = globalAlpha;
+  detailImageryLayer.alpha = 1 - globalAlpha;
+}
+
+async function addSatelliteImagery() {
+  try {
+    const globalProvider = Cesium.SingleTileImageryProvider.fromUrl
+      ? await Cesium.SingleTileImageryProvider.fromUrl(
+          BLUE_MARBLE_URL,
+          { credit: "NASA Visible Earth / Blue Marble" }
+        )
+      : new Cesium.SingleTileImageryProvider({
+          url: BLUE_MARBLE_URL,
+          credit: "NASA Visible Earth / Blue Marble",
+        });
+
+    globalImageryLayer =
+      viewer.imageryLayers.addImageryProvider(globalProvider);
+    globalImageryLayer.brightness = 0.86;
+    globalImageryLayer.contrast = 1.12;
+    globalImageryLayer.saturation = 0.86;
+    globalImageryLayer.gamma = 0.98;
+  } catch (error) {
+    console.warn("Blue Marble load failed:", error);
+  }
+
+  const detailProvider =
+    await Cesium.ArcGisMapServerImageryProvider.fromUrl(
+      SATELLITE_SERVICE_URL
+    );
+
+  detailImageryLayer =
+    viewer.imageryLayers.addImageryProvider(detailProvider);
+  detailImageryLayer.brightness = 0.86;
+  detailImageryLayer.contrast = 1.16;
+  detailImageryLayer.saturation = 0.86;
+  detailImageryLayer.gamma = 0.98;
+
+  updateImageryBlend();
+  viewer.camera.changed.addEventListener(updateImageryBlend);
+
   satelliteReady = true;
   setStatus("衛星写真を読み込みました");
 }
@@ -544,15 +648,20 @@ async function initialize() {
   });
 
   viewer.scene.highDynamicRange = true;
+  viewer.scene.backgroundColor = Cesium.Color.BLACK;
   viewer.scene.globe.enableLighting = true;
-  viewer.scene.globe.dynamicAtmosphereLighting = true;
-  viewer.scene.globe.dynamicAtmosphereLightingFromSun = true;
-  viewer.scene.globe.showGroundAtmosphere = true;
+  viewer.scene.globe.dynamicAtmosphereLighting = false;
+  viewer.scene.globe.dynamicAtmosphereLightingFromSun = false;
+  viewer.scene.globe.showGroundAtmosphere = false;
+  viewer.scene.fog.enabled = false;
 
-  viewer.scene.skyAtmosphere.show = true;
-  viewer.scene.skyAtmosphere.hueShift = -0.02;
-  viewer.scene.skyAtmosphere.saturationShift = -0.08;
-  viewer.scene.skyAtmosphere.brightnessShift = -0.03;
+  viewer.scene.skyAtmosphere.show = false;
+  if (viewer.scene.skyBox) {
+    viewer.scene.skyBox.show = false;
+  }
+  if (viewer.scene.moon) {
+    viewer.scene.moon.show = false;
+  }
 
   if (viewer.scene.postProcessStages.fxaa) {
     viewer.scene.postProcessStages.fxaa.enabled = true;
