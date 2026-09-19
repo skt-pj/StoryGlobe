@@ -1,7 +1,7 @@
 const SATELLITE_SERVICE_URL =
   "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer";
 const BLUE_MARBLE_URL =
-  "https://eoimages.gsfc.nasa.gov/images/imagerecords/57000/57735/land_ocean_ice_cloud_2048.jpg";
+  "https://eoimages.gsfc.nasa.gov/images/imagerecords/57000/57730/land_ocean_ice_8192.png";
 
 const RECORD_FPS = 30;
 const PRE_ROLL_MS = 500;
@@ -33,6 +33,7 @@ let destinationMarker;
 let globalImageryLayer;
 let detailImageryLayer;
 let satelliteReady = false;
+let recordingViewportState = null;
 
 function setStatus(message) {
   elements.status.textContent = message;
@@ -134,23 +135,29 @@ function showMarker(story) {
     viewer.entities.remove(destinationMarker);
   }
 
+  const markerScale = Math.max(1, story.outputHeight / 1080);
+  const pointSize = Math.round(14 * markerScale);
+  const outlineWidth = Math.max(3, Math.round(3 * markerScale));
+  const fontSize = Math.round(22 * markerScale);
+  const labelOffset = Math.round(-36 * markerScale);
+
   destinationMarker = viewer.entities.add({
     position: Cesium.Cartesian3.fromDegrees(story.longitude, story.latitude),
     point: {
-      pixelSize: 11,
+      pixelSize: pointSize,
       color: Cesium.Color.WHITE,
       outlineColor: Cesium.Color.BLACK,
-      outlineWidth: 3,
+      outlineWidth,
       disableDepthTestDistance: Number.POSITIVE_INFINITY,
     },
     label: {
       text: story.name,
-      font: "600 15px sans-serif",
+      font: "600 " + fontSize + "px sans-serif",
       fillColor: Cesium.Color.WHITE,
       outlineColor: Cesium.Color.BLACK,
-      outlineWidth: 4,
+      outlineWidth: Math.max(4, Math.round(4 * markerScale)),
       style: Cesium.LabelStyle.FILL_AND_OUTLINE,
-      pixelOffset: new Cesium.Cartesian2(0, -28),
+      pixelOffset: new Cesium.Cartesian2(0, labelOffset),
       disableDepthTestDistance: Number.POSITIVE_INFINITY,
     },
   });
@@ -281,39 +288,98 @@ function getMp4MimeType() {
 }
 
 function applyRecordingViewport(outputWidth, outputHeight) {
-  const aspect = outputWidth / outputHeight;
-  const viewportWidth = window.innerWidth;
-  const viewportHeight = window.innerHeight;
-  const viewportAspect = viewportWidth / viewportHeight;
+  const displayScale = Math.min(
+    window.innerWidth / outputWidth,
+    window.innerHeight / outputHeight,
+    1
+  );
 
-  let cssWidth;
-  let cssHeight;
+  recordingViewportState = {
+    resolutionScale: viewer.resolutionScale,
+  };
 
-  if (viewportAspect > aspect) {
-    cssHeight = viewportHeight;
-    cssWidth = cssHeight * aspect;
-  } else {
-    cssWidth = viewportWidth;
-    cssHeight = cssWidth / aspect;
-  }
+  viewer.resolutionScale = 1.0;
 
   Object.assign(elements.cesiumContainer.style, {
     inset: "auto",
     left: "50%",
     top: "50%",
-    width: cssWidth + "px",
-    height: cssHeight + "px",
-    transform: "translate(-50%, -50%)",
+    width: outputWidth + "px",
+    height: outputHeight + "px",
+    transform:
+      "translate(-50%, -50%) scale(" + displayScale + ")",
+    transformOrigin: "center center",
   });
 
   viewer.resize();
   viewer.scene.requestRender();
 }
 
+function assertRecordingCanvasSize(outputWidth, outputHeight) {
+  if (
+    viewer.canvas.width !== outputWidth ||
+    viewer.canvas.height !== outputHeight
+  ) {
+    throw new Error(
+      "Cesiumの実描画解像度が指定値と一致しません: " +
+        viewer.canvas.width +
+        "×" +
+        viewer.canvas.height
+    );
+  }
+}
+
 function restoreViewerViewport() {
   elements.cesiumContainer.removeAttribute("style");
+
+  if (recordingViewportState) {
+    viewer.resolutionScale = recordingViewportState.resolutionScale;
+    recordingViewportState = null;
+  }
+
   viewer.resize();
   viewer.scene.requestRender();
+}
+
+function waitForGlobeTiles(timeoutMs = 8000) {
+  return new Promise((resolve) => {
+    const startedAt = performance.now();
+
+    function check() {
+      viewer.scene.requestRender();
+
+      if (viewer.scene.globe.tilesLoaded) {
+        resolve();
+        return;
+      }
+
+      if (performance.now() - startedAt >= timeoutMs) {
+        resolve();
+        return;
+      }
+
+      window.requestAnimationFrame(check);
+    }
+
+    check();
+  });
+}
+
+async function preloadDestination(story) {
+  const view = getNadirCameraView(story);
+
+  viewer.camera.setView({
+    destination: view.destination,
+    orientation: {
+      direction: view.direction,
+      up: view.up,
+    },
+  });
+  updateImageryBlend();
+
+  await waitForAnimationFrames(3);
+  await waitForGlobeTiles();
+  await waitForAnimationFrames(2);
 }
 
 function getVisibleCreditText() {
@@ -492,7 +558,13 @@ async function runStory() {
 
   try {
     applyRecordingViewport(story.outputWidth, story.outputHeight);
+    await waitForAnimationFrames(3);
+    assertRecordingCanvasSize(story.outputWidth, story.outputHeight);
+
+    await preloadDestination(story);
+
     setHomeView(false);
+    updateImageryBlend();
     await waitForAnimationFrames(3);
     await wait(350);
 
@@ -623,6 +695,7 @@ async function initialize() {
     infoBox: false,
     selectionIndicator: false,
     baseLayer: false,
+    useBrowserRecommendedResolution: true,
     terrainProvider: new Cesium.EllipsoidTerrainProvider(),
     contextOptions: {
       webgl: {
@@ -639,6 +712,8 @@ async function initialize() {
 
   viewer.scene.globe.enableLighting = false;
   viewer.scene.globe.showGroundAtmosphere = false;
+  viewer.scene.globe.maximumScreenSpaceError = 1.0;
+  viewer.scene.globe.preloadSiblings = true;
   viewer.scene.fog.enabled = false;
 
   viewer.scene.skyAtmosphere.show = true;
