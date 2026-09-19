@@ -92,20 +92,51 @@ h1 {
   transition: opacity 160ms ease, visibility 160ms ease;
 }
 
-
-.app.preloading::after {
-  content: "経路を事前読み込み中";
-  position: absolute;
-  z-index: 25;
+.preload-overlay {
+  position: fixed;
+  z-index: 1000;
   inset: 0;
   display: grid;
   place-items: center;
+  visibility: hidden;
+  opacity: 0;
   background: #000;
-  color: rgba(255, 255, 255, 0.78);
+  pointer-events: none;
+  transition: opacity 120ms ease;
+}
+
+.preload-overlay.visible {
+  visibility: visible;
+  opacity: 1;
+}
+
+.preload-overlay__content {
+  display: grid;
+  justify-items: center;
+  gap: 14px;
+  color: rgba(255, 255, 255, 0.82);
   font-size: 14px;
   font-weight: 600;
   letter-spacing: 0.08em;
-  pointer-events: none;
+}
+
+.preload-overlay__content p {
+  margin: 0;
+}
+
+.preload-spinner {
+  width: 28px;
+  height: 28px;
+  border: 2px solid rgba(255, 255, 255, 0.18);
+  border-top-color: rgba(255, 255, 255, 0.88);
+  border-radius: 50%;
+  animation: preload-spin 800ms linear infinite;
+}
+
+@keyframes preload-spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .app.recording .topbar,
