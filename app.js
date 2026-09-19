@@ -6,10 +6,12 @@ const BLUE_MARBLE_URL =
 const RECORD_FPS = 30;
 const PRE_ROLL_MS = 500;
 const POST_ROLL_MS = 500;
-const ROUTE_PRELOAD_MIN_SECONDS = 6;
-const ROUTE_PRELOAD_MAX_SECONDS = 20;
-const ROUTE_PRELOAD_MULTIPLIER = 1.5;
-const ROUTE_PRELOAD_TILE_TIMEOUT_MS = 20000;
+const ROUTE_PRELOAD_SAMPLES = 18;
+const ROUTE_PRELOAD_STEP_TIMEOUT_MS = 6000;
+const ROUTE_PRELOAD_FINAL_TIMEOUT_MS = 18000;
+const ROUTE_TILE_CACHE_SIZE = 2048;
+const TILE_QUEUE_START_GRACE_MS = 350;
+const TILE_QUEUE_QUIET_MS = 250;
 
 
 const elements = {
@@ -26,6 +28,8 @@ const elements = {
   play: document.getElementById("playButton"),
   home: document.getElementById("homeButton"),
   status: document.getElementById("status"),
+  preloadOverlay: document.getElementById("preloadOverlay"),
+  preloadText: document.getElementById("preloadText"),
   overlay: document.getElementById("videoOverlay"),
   storyVideo: document.getElementById("storyVideo"),
   videoTitle: document.getElementById("videoTitle"),
@@ -362,63 +366,169 @@ function restoreViewerViewport() {
   viewer.scene.requestRender();
 }
 
-function waitForGlobeTiles(timeoutMs = 8000) {
+function waitForCurrentViewTiles(timeoutMs) {
   return new Promise((resolve) => {
+    const globe = viewer.scene.globe;
     const startedAt = performance.now();
+    let sawLoading = false;
+    let quietSince = null;
+    let lastQueueLength = globe.tilesLoaded ? 0 : 1;
+
+    const removeProgressListener =
+      globe.tileLoadProgressEvent.addEventListener((queueLength) => {
+        lastQueueLength = queueLength;
+
+        if (queueLength > 0) {
+          sawLoading = true;
+          quietSince = null;
+        } else if (sawLoading) {
+          quietSince = performance.now();
+        }
+      });
+
+    function finish(timedOut = false) {
+      removeProgressListener();
+      resolve({
+        timedOut,
+        sawLoading,
+        lastQueueLength,
+      });
+    }
 
     function check() {
       viewer.scene.requestRender();
+      viewer.scene.render();
 
-      if (viewer.scene.globe.tilesLoaded) {
-        resolve();
+      const now = performance.now();
+      const elapsed = now - startedAt;
+
+      if (!globe.tilesLoaded) {
+        sawLoading = true;
+        quietSince = null;
+      } else if (
+        quietSince === null &&
+        (sawLoading || elapsed >= TILE_QUEUE_START_GRACE_MS)
+      ) {
+        quietSince = now;
+      }
+
+      if (
+        quietSince !== null &&
+        now - quietSince >= TILE_QUEUE_QUIET_MS
+      ) {
+        finish(false);
         return;
       }
 
-      if (performance.now() - startedAt >= timeoutMs) {
-        resolve();
+      if (elapsed >= timeoutMs) {
+        finish(true);
         return;
       }
 
       window.requestAnimationFrame(check);
     }
 
-    check();
+    window.requestAnimationFrame(check);
   });
 }
 
-async function preloadFlightPath(story) {
-  const preloadDuration = Math.min(
-    ROUTE_PRELOAD_MAX_SECONDS,
-    Math.max(
-      ROUTE_PRELOAD_MIN_SECONDS,
-      story.duration * ROUTE_PRELOAD_MULTIPLIER
-    )
+function shortestLongitudeDelta(startLongitude, endLongitude) {
+  return ((((endLongitude - startLongitude) + 540) % 360) - 180);
+}
+
+function preloadSampleView(story, t) {
+  const startLongitude = 20;
+  const startLatitude = 18;
+  const startHeight = 22000000;
+  const eased = Cesium.EasingFunction.CUBIC_IN_OUT(t);
+
+  const longitude =
+    startLongitude +
+    shortestLongitudeDelta(startLongitude, story.longitude) * eased;
+  const latitude =
+    startLatitude + (story.latitude - startLatitude) * eased;
+
+  const startLogHeight = Math.log(startHeight);
+  const endLogHeight = Math.log(story.height);
+  const height = Math.exp(
+    startLogHeight + (endLogHeight - startLogHeight) * eased
   );
 
+  viewer.camera.setView({
+    destination: Cesium.Cartesian3.fromDegrees(
+      longitude,
+      latitude,
+      height
+    ),
+    orientation: {
+      heading: 0,
+      pitch: Cesium.Math.toRadians(-90),
+      roll: 0,
+    },
+  });
+
+  updateImageryBlend();
+  viewer.scene.requestRender();
+}
+
+function setPreloadOverlay(visible, text = "経路を事前読み込み中") {
+  elements.preloadText.textContent = text;
+  elements.preloadOverlay.classList.toggle("visible", visible);
+  elements.preloadOverlay.setAttribute(
+    "aria-hidden",
+    visible ? "false" : "true"
+  );
+}
+
+async function preloadFlightPath(story) {
   clearDestinationMarker();
-  elements.app.classList.add("preloading");
+  setPreloadOverlay(true);
   setStatus("経路を事前読み込み中");
 
+  const globe = viewer.scene.globe;
+  const previousCacheSize = globe.tileCacheSize;
+  const previousPreloadSiblings = globe.preloadSiblings;
+
+  globe.tileCacheSize = Math.max(previousCacheSize, ROUTE_TILE_CACHE_SIZE);
+  globe.preloadSiblings = false;
+
   try {
-    setHomeView(false);
-    updateImageryBlend();
-    await waitForAnimationFrames(3);
-    await waitForGlobeTiles(8000);
+    for (let index = 0; index < ROUTE_PRELOAD_SAMPLES; index += 1) {
+      const linearT = index / (ROUTE_PRELOAD_SAMPLES - 1);
+      const t = 1 - Math.pow(1 - linearT, 1.65);
+      const progress = Math.round(linearT * 100);
 
-    await flyToStory(story, {
-      duration: preloadDuration,
-      showMarkerAtEnd: false,
+      setPreloadOverlay(true, "経路を事前読み込み中 " + progress + "%");
+      preloadSampleView(story, t);
+
+      await waitForAnimationFrames(2);
+      await waitForCurrentViewTiles(ROUTE_PRELOAD_STEP_TIMEOUT_MS);
+    }
+
+    const finalView = getNadirCameraView(story);
+    viewer.camera.setView({
+      destination: finalView.destination,
+      orientation: {
+        direction: finalView.direction,
+        up: finalView.up,
+      },
     });
+    updateImageryBlend();
 
-    await waitForGlobeTiles(ROUTE_PRELOAD_TILE_TIMEOUT_MS);
+    setPreloadOverlay(true, "到着地点を読み込み中");
     await waitForAnimationFrames(3);
+    await waitForCurrentViewTiles(ROUTE_PRELOAD_FINAL_TIMEOUT_MS);
 
     setHomeView(false);
     updateImageryBlend();
     await waitForAnimationFrames(4);
-    await waitForGlobeTiles(5000);
   } finally {
-    elements.app.classList.remove("preloading");
+    globe.tileCacheSize = Math.max(
+      previousCacheSize,
+      ROUTE_TILE_CACHE_SIZE
+    );
+    globe.preloadSiblings = false;
+    setPreloadOverlay(false);
   }
 }
 
@@ -752,9 +862,9 @@ async function initialize() {
   viewer.scene.globe.enableLighting = false;
   viewer.scene.globe.showGroundAtmosphere = false;
   viewer.scene.globe.maximumScreenSpaceError = 1.0;
-  viewer.scene.globe.tileCacheSize = 512;
+  viewer.scene.globe.tileCacheSize = ROUTE_TILE_CACHE_SIZE;
   viewer.scene.globe.preloadAncestors = true;
-  viewer.scene.globe.preloadSiblings = true;
+  viewer.scene.globe.preloadSiblings = false;
   viewer.scene.fog.enabled = false;
 
   viewer.scene.skyAtmosphere.show = true;
