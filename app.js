@@ -136,10 +136,10 @@ function showMarker(story) {
   }
 
   const markerScale = Math.max(1, story.outputHeight / 1080);
-  const pointSize = Math.round(14 * markerScale);
-  const outlineWidth = Math.max(3, Math.round(3 * markerScale));
-  const fontSize = Math.round(22 * markerScale);
-  const labelOffset = Math.round(-36 * markerScale);
+  const pointSize = Math.round(20 * markerScale);
+  const outlineWidth = Math.max(4, Math.round(4 * markerScale));
+  const fontSize = Math.round(36 * markerScale);
+  const labelOffset = Math.round(-52 * markerScale);
 
   destinationMarker = viewer.entities.add({
     position: Cesium.Cartesian3.fromDegrees(story.longitude, story.latitude),
@@ -155,7 +155,7 @@ function showMarker(story) {
       font: "600 " + fontSize + "px sans-serif",
       fillColor: Cesium.Color.WHITE,
       outlineColor: Cesium.Color.BLACK,
-      outlineWidth: Math.max(4, Math.round(4 * markerScale)),
+      outlineWidth: Math.max(5, Math.round(5 * markerScale)),
       style: Cesium.LabelStyle.FILL_AND_OUTLINE,
       pixelOffset: new Cesium.Cartesian2(0, labelOffset),
       disableDepthTestDistance: Number.POSITIVE_INFINITY,
