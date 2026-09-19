@@ -6,6 +6,10 @@ const BLUE_MARBLE_URL =
 const RECORD_FPS = 30;
 const PRE_ROLL_MS = 500;
 const POST_ROLL_MS = 500;
+const ROUTE_PRELOAD_MIN_SECONDS = 6;
+const ROUTE_PRELOAD_MAX_SECONDS = 20;
+const ROUTE_PRELOAD_MULTIPLIER = 1.5;
+const ROUTE_PRELOAD_TILE_TIMEOUT_MS = 20000;
 
 
 const elements = {
@@ -130,10 +134,15 @@ function setHomeView(animated = true) {
   setStatus("地球全景");
 }
 
-function showMarker(story) {
+function clearDestinationMarker() {
   if (destinationMarker) {
     viewer.entities.remove(destinationMarker);
+    destinationMarker = null;
   }
+}
+
+function showMarker(story) {
+  clearDestinationMarker();
 
   const markerScale = Math.max(1, story.outputHeight / 1080);
   const pointSize = Math.round(20 * markerScale);
@@ -239,7 +248,13 @@ function getNadirCameraView(story) {
   };
 }
 
-function flyToStory(story) {
+function flyToStory(
+  story,
+  {
+    duration = story.duration,
+    showMarkerAtEnd = true,
+  } = {}
+) {
   return new Promise((resolve) => {
     const view = getNadirCameraView(story);
 
@@ -249,7 +264,7 @@ function flyToStory(story) {
         direction: view.direction,
         up: view.up,
       },
-      duration: story.duration,
+      duration,
       easingFunction: Cesium.EasingFunction.CUBIC_IN_OUT,
       complete: () => {
         viewer.camera.setView({
@@ -259,7 +274,13 @@ function flyToStory(story) {
             up: view.up,
           },
         });
-        showMarker(story);
+
+        if (showMarkerAtEnd) {
+          showMarker(story);
+        } else {
+          clearDestinationMarker();
+        }
+
         viewer.scene.requestRender();
         resolve();
       },
@@ -365,21 +386,40 @@ function waitForGlobeTiles(timeoutMs = 8000) {
   });
 }
 
-async function preloadDestination(story) {
-  const view = getNadirCameraView(story);
+async function preloadFlightPath(story) {
+  const preloadDuration = Math.min(
+    ROUTE_PRELOAD_MAX_SECONDS,
+    Math.max(
+      ROUTE_PRELOAD_MIN_SECONDS,
+      story.duration * ROUTE_PRELOAD_MULTIPLIER
+    )
+  );
 
-  viewer.camera.setView({
-    destination: view.destination,
-    orientation: {
-      direction: view.direction,
-      up: view.up,
-    },
-  });
-  updateImageryBlend();
+  clearDestinationMarker();
+  elements.app.classList.add("preloading");
+  setStatus("経路を事前読み込み中");
 
-  await waitForAnimationFrames(3);
-  await waitForGlobeTiles();
-  await waitForAnimationFrames(2);
+  try {
+    setHomeView(false);
+    updateImageryBlend();
+    await waitForAnimationFrames(3);
+    await waitForGlobeTiles(8000);
+
+    await flyToStory(story, {
+      duration: preloadDuration,
+      showMarkerAtEnd: false,
+    });
+
+    await waitForGlobeTiles(ROUTE_PRELOAD_TILE_TIMEOUT_MS);
+    await waitForAnimationFrames(3);
+
+    setHomeView(false);
+    updateImageryBlend();
+    await waitForAnimationFrames(4);
+    await waitForGlobeTiles(5000);
+  } finally {
+    elements.app.classList.remove("preloading");
+  }
 }
 
 function getVisibleCreditText() {
@@ -561,10 +601,9 @@ async function runStory() {
     await waitForAnimationFrames(3);
     assertRecordingCanvasSize(story.outputWidth, story.outputHeight);
 
-    await preloadDestination(story);
+    await preloadFlightPath(story);
 
-    setHomeView(false);
-    updateImageryBlend();
+    setStatus("録画中");
     await waitForAnimationFrames(3);
     await wait(350);
 
@@ -713,6 +752,8 @@ async function initialize() {
   viewer.scene.globe.enableLighting = false;
   viewer.scene.globe.showGroundAtmosphere = false;
   viewer.scene.globe.maximumScreenSpaceError = 1.0;
+  viewer.scene.globe.tileCacheSize = 512;
+  viewer.scene.globe.preloadAncestors = true;
   viewer.scene.globe.preloadSiblings = true;
   viewer.scene.fog.enabled = false;
 
