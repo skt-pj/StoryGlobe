@@ -5,6 +5,28 @@ const RECORD_FPS = 30;
 const PRE_ROLL_MS = 500;
 const POST_ROLL_MS = 500;
 
+const REALISM_FRAGMENT_SHADER = `
+uniform sampler2D colorTexture;
+in vec2 v_textureCoordinates;
+
+void main() {
+  vec4 source = texture(colorTexture, v_textureCoordinates);
+  vec3 color = max(source.rgb, vec3(0.0));
+
+  color = (color - vec3(0.5)) * 1.06 + vec3(0.5);
+  color = pow(max(color, vec3(0.0)), vec3(0.96));
+
+  float luma = dot(color, vec3(0.2126, 0.7152, 0.0722));
+  color = mix(vec3(luma), color, 1.04);
+
+  float edgeDistance = distance(v_textureCoordinates, vec2(0.5));
+  float vignette = 1.0 - smoothstep(0.35, 0.72, edgeDistance);
+  color *= mix(0.92, 1.0, vignette);
+
+  out_FragColor = vec4(clamp(color, 0.0, 1.0), source.a);
+}
+`;
+
 const elements = {
   app: document.getElementById("app"),
   cesiumContainer: document.getElementById("cesiumContainer"),
@@ -486,7 +508,11 @@ async function addSatelliteImagery() {
     SATELLITE_SERVICE_URL
   );
 
-  viewer.imageryLayers.addImageryProvider(provider);
+  const layer = viewer.imageryLayers.addImageryProvider(provider);
+  layer.brightness = 0.92;
+  layer.contrast = 1.12;
+  layer.saturation = 0.9;
+  layer.gamma = 0.94;
   satelliteReady = true;
   setStatus("衛星写真を読み込みました");
 }
@@ -517,9 +543,27 @@ async function initialize() {
     },
   });
 
-  viewer.scene.globe.enableLighting = false;
+  viewer.scene.highDynamicRange = true;
+  viewer.scene.globe.enableLighting = true;
+  viewer.scene.globe.dynamicAtmosphereLighting = true;
+  viewer.scene.globe.dynamicAtmosphereLightingFromSun = true;
   viewer.scene.globe.showGroundAtmosphere = true;
+
   viewer.scene.skyAtmosphere.show = true;
+  viewer.scene.skyAtmosphere.hueShift = -0.02;
+  viewer.scene.skyAtmosphere.saturationShift = -0.08;
+  viewer.scene.skyAtmosphere.brightnessShift = -0.03;
+
+  if (viewer.scene.postProcessStages.fxaa) {
+    viewer.scene.postProcessStages.fxaa.enabled = true;
+  }
+
+  viewer.scene.postProcessStages.add(
+    new Cesium.PostProcessStage({
+      name: "storyglobe-realism",
+      fragmentShader: REALISM_FRAGMENT_SHADER,
+    })
+  );
 
   setHomeView(false);
 
