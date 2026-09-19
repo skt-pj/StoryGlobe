@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>StoryGlobe</title>
-  <meta name="description" content="Fly from a textured globe to a story location, then transition into video.">
+  <meta name="description" content="Fly from a satellite globe to a story location and export the flight as MP4.">
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/cesium@latest/Build/Cesium/Widgets/widgets.css">
   <link rel="stylesheet" href="./styles.css">
   <script>
@@ -13,8 +13,8 @@
   <script src="https://cdn.jsdelivr.net/npm/cesium@latest/Build/Cesium/Cesium.js"></script>
 </head>
 <body>
-  <main class="app">
-    <div id="cesiumContainer" aria-label="3D globe"></div>
+  <main id="app" class="app">
+    <div id="cesiumContainer" aria-label="3D satellite globe"></div>
 
     <header class="topbar">
       <div>
@@ -52,16 +52,27 @@
         </label>
       </div>
 
+      <div class="grid-two">
+        <label>
+          <span>出力幅 (px)</span>
+          <input id="widthInput" type="number" step="1" min="1" value="1920">
+        </label>
+        <label>
+          <span>出力高さ (px)</span>
+          <input id="heightOutputInput" type="number" step="1" min="1" value="1080">
+        </label>
+      </div>
+
       <label>
         <span>動画URL</span>
         <input id="videoInput" type="url" placeholder="https://.../movie.mp4">
       </label>
 
-      <button id="playButton" class="primary" type="button">地点へ移動して動画へ</button>
+      <button id="playButton" class="primary" type="button">開始してMP4出力</button>
       <p id="status" class="status" role="status">準備完了</p>
     </section>
 
-    <div class="credit">Earth texture: NASA Visible Earth / Blue Marble</div>
+    <div class="credit">Satellite imagery: Esri World Imagery</div>
 
     <section id="videoOverlay" class="video-overlay" aria-hidden="true">
       <div class="video-shell">
