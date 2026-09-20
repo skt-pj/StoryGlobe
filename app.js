@@ -2,7 +2,13 @@ const SATELLITE_SERVICE_URL =
   "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer";
 const BLUE_MARBLE_URL =
   "https://eoimages.gsfc.nasa.gov/images/imagerecords/57000/57730/land_ocean_ice_8192.png";
-const NESSIE_IMAGE_URL = "./assets/loch-ness-monster.png";
+const NESSIE_IMAGE_URL =
+  "./assets/loch-ness-monster.png?v=20260920-2";
+const NESSIE_DESTINATION = Object.freeze({
+  name: "ネッシー",
+  latitude: 57.2741223,
+  longitude: -4.4849684,
+});
 
 const RECORD_FPS = 30;
 const PRE_ROLL_MS = 500;
@@ -49,6 +55,7 @@ let detailImageryLayer;
 let satelliteReady = false;
 let recordingViewportState = null;
 let nessieImageReady = false;
+let nessieImageElement = null;
 
 function setStatus(message) {
   elements.status.textContent = message;
@@ -59,21 +66,38 @@ function wait(milliseconds) {
 }
 
 function preloadNessieImage() {
-  if (nessieImageReady) {
-    return Promise.resolve();
+  if (nessieImageReady && nessieImageElement) {
+    return Promise.resolve(nessieImageElement);
   }
 
   return new Promise((resolve, reject) => {
     const image = new Image();
 
-    image.addEventListener("load", () => {
-      nessieImageReady = true;
-      resolve();
-    }, { once: true });
+    image.addEventListener(
+      "load",
+      async () => {
+        try {
+          if (typeof image.decode === "function") {
+            await image.decode();
+          }
+        } catch {
+          // The image is already loaded; decoding failure should not block display.
+        }
 
-    image.addEventListener("error", () => {
-      reject(new Error("ネッシー画像を読み込めませんでした"));
-    }, { once: true });
+        nessieImageElement = image;
+        nessieImageReady = true;
+        resolve(image);
+      },
+      { once: true }
+    );
+
+    image.addEventListener(
+      "error",
+      () => {
+        reject(new Error("ネッシー画像を読み込めませんでした"));
+      },
+      { once: true }
+    );
 
     image.src = NESSIE_IMAGE_URL;
   });
@@ -109,8 +133,8 @@ function readPositiveInteger(input, label) {
 }
 
 function readStory() {
-  const latitude = readNumber(elements.lat, "緯度");
-  const longitude = readNumber(elements.lon, "経度");
+  const latitude = NESSIE_DESTINATION.latitude;
+  const longitude = NESSIE_DESTINATION.longitude;
   const height = readNumber(elements.height, "到着高度");
   const duration = readNumber(elements.duration, "移動時間");
   const outputWidth = readPositiveInteger(elements.outputWidth, "出力幅");
@@ -130,9 +154,9 @@ function readStory() {
   }
 
   return {
-    name: elements.name.value.trim() || "Story location",
-    latitude,
-    longitude,
+    name: NESSIE_DESTINATION.name,
+    latitude: NESSIE_DESTINATION.latitude,
+    longitude: NESSIE_DESTINATION.longitude,
     height,
     duration,
     outputWidth,
@@ -192,9 +216,11 @@ function showMarker(story) {
   destinationMarker = viewer.entities.add({
     position: Cesium.Cartesian3.fromDegrees(story.longitude, story.latitude),
     billboard: {
-      image: NESSIE_IMAGE_URL,
+      image: nessieImageElement || NESSIE_IMAGE_URL,
       width: imageWidth,
       height: imageHeight,
+      horizontalOrigin: Cesium.HorizontalOrigin.CENTER,
+      verticalOrigin: Cesium.VerticalOrigin.BOTTOM,
       pixelOffset: new Cesium.Cartesian2(0, imageOffset),
       disableDepthTestDistance: Number.POSITIVE_INFINITY,
     },
@@ -827,13 +853,16 @@ async function runStory() {
   await openVideo(story);
 }
 
+function applyNessieDestinationToForm() {
+  elements.name.value = NESSIE_DESTINATION.name;
+  elements.lat.value = String(NESSIE_DESTINATION.latitude);
+  elements.lon.value = String(NESSIE_DESTINATION.longitude);
+}
+
 function applyQueryParameters() {
   const params = new URLSearchParams(window.location.search);
 
   const mappings = [
-    ["name", elements.name],
-    ["lat", elements.lat],
-    ["lon", elements.lon],
     ["height", elements.height],
     ["duration", elements.duration],
     ["width", elements.outputWidth],
@@ -982,6 +1011,8 @@ async function initialize() {
   }
 
   const autoplay = applyQueryParameters();
+  applyNessieDestinationToForm();
+  await preloadNessieImage();
 
   elements.play.addEventListener("click", runStory);
   elements.home.addEventListener("click", () => {
