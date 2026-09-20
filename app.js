@@ -950,29 +950,39 @@ async function getVideoEncoderConfig(story) {
           "avc1.42001f",
         ];
 
+  const accelerationPreferences = [
+    "prefer-hardware",
+    "prefer-software",
+  ];
+
   for (const codec of codecs) {
-    const config = {
-      codec,
-      width: story.outputWidth,
-      height: story.outputHeight,
-      bitrate,
-      framerate: RECORD_FPS,
-      latencyMode: "quality",
-      hardwareAcceleration: "prefer-hardware",
-      avc: {
-        format: "avc",
-      },
-    };
+    for (
+      const hardwareAcceleration
+      of accelerationPreferences
+    ) {
+      const config = {
+        codec,
+        width: story.outputWidth,
+        height: story.outputHeight,
+        bitrate,
+        framerate: RECORD_FPS,
+        latencyMode: "quality",
+        hardwareAcceleration,
+        avc: {
+          format: "avc",
+        },
+      };
 
-    try {
-      const support =
-        await VideoEncoder.isConfigSupported(config);
+      try {
+        const support =
+          await VideoEncoder.isConfigSupported(config);
 
-      if (support.supported) {
-        return support.config;
+        if (support.supported) {
+          return support.config;
+        }
+      } catch {
+        // Try the next acceleration mode/profile.
       }
-    } catch {
-      // Try the next H.264 profile/level.
     }
   }
 
