@@ -3,7 +3,7 @@
 
 Requires:
     pip install playwright
-    playwright install chrome
+    playwright install chromium
 
 The browser is controlled entirely from Python. No manual page interaction is required.
 """
@@ -85,7 +85,7 @@ def _launch_browser(playwright, *, channel: str | None, headless: bool):
 
     raise RuntimeError(
         "Chrome/Chromiumを起動できませんでした。"
-        " pip install playwright と playwright install chrome を確認してください。"
+        " pip install playwright と playwright install chromium を確認してください。"
     ) from last_error
 
 
