@@ -1687,8 +1687,11 @@ function installSettingsPersistence() {
   ];
 
   for (const input of inputs) {
+    input.addEventListener("input", saveSettingsCookie);
     input.addEventListener("change", saveSettingsCookie);
   }
+
+  window.addEventListener("beforeunload", saveSettingsCookie);
 }
 
 function updateImageryBlend() {
