@@ -43,20 +43,20 @@ H.264 WebCodecsに対応していないブラウザでは開始前に非対応�
 2. URLパラメータがある場合は、Cookieを復元したあと指定された項目だけURL値で上書きします。自動開始はしません。
 3. `auto=1` を付けた場合は、URL/Cookieから設定を確定したあと自動で生成し、MP4ダウンロードまで進みます。
 
-初回アクセスでCookieがない場合はネッシー / ネス湖の既定値を使用します。画面で変更した値とURLで指定した値は、次回アクセス用Cookieへ保存されます。
+初回アクセスでCookieがない場合は、前々回=ネッシー（ネス湖）、前回=チュパカブラ（カノバナス周辺）、今回=ビッグフット（ブラフ・クリーク周辺）を既定値として使用します。画面で変更した値とURLで指定した値は、次回アクセス用Cookieへ保存されます。
 
 ## URLパラメータ
 
 通常起動で値だけ指定する例:
 
 ```text
-?prev2Name=前々回&prev2Lat=35.681236&prev2Lon=139.767125&prevName=前回&prevLat=51.5074&prevLon=-0.1278&name=ネッシー&lat=57.2741223&lon=-4.4849684&w=1920&h=1080&duration=5
+?prev2Name=ネッシー&prev2Lat=57.2741223&prev2Lon=-4.4849684&prevName=チュパカブラ&prevLat=18.374&prevLon=-65.899&name=ビッグフット&lat=41.252&lon=-123.632&w=1920&h=1080&duration=5
 ```
 
 自動生成・自動ダウンロード:
 
 ```text
-?prev2Name=前々回&prev2Lat=35.681236&prev2Lon=139.767125&prevName=前回&prevLat=51.5074&prevLon=-0.1278&name=ネッシー&lat=57.2741223&lon=-4.4849684&w=1920&h=1080&duration=5&auto=1&filename=nessie
+?prev2Name=ネッシー&prev2Lat=57.2741223&prev2Lon=-4.4849684&prevName=チュパカブラ&prevLat=18.374&prevLon=-65.899&name=ビッグフット&lat=41.252&lon=-123.632&w=1920&h=1080&duration=5&auto=1&filename=bigfoot
 ```
 
 対応項目:
@@ -89,16 +89,16 @@ playwright install chromium
 CLI:
 
 ```bash
-python scripts/download_storyglobe.py output/nessie.mp4 \
-  --prev2-name 前々回 \
-  --prev2-lat 35.681236 \
-  --prev2-lon 139.767125 \
-  --prev-name 前回 \
-  --prev-lat 51.5074 \
-  --prev-lon -0.1278 \
-  --name ネッシー \
-  --lat 57.2741223 \
-  --lon -4.4849684 \
+python scripts/download_storyglobe.py output/bigfoot.mp4 \
+  --prev2-name ネッシー \
+  --prev2-lat 57.2741223 \
+  --prev2-lon -4.4849684 \
+  --prev-name チュパカブラ \
+  --prev-lat 18.374 \
+  --prev-lon -65.899 \
+  --name ビッグフット \
+  --lat 41.252 \
+  --lon -123.632 \
   --height 350000 \
   --duration 5 \
   --width 1920 \
@@ -111,16 +111,16 @@ Pythonコードから直接:
 from scripts.download_storyglobe import download_storyglobe
 
 path = download_storyglobe(
-    "output/nessie.mp4",
-    prev2_name="前々回",
-    prev2_lat=35.681236,
-    prev2_lon=139.767125,
-    prev_name="前回",
-    prev_lat=51.5074,
-    prev_lon=-0.1278,
-    name="ネッシー",
-    lat=57.2741223,
-    lon=-4.4849684,
+    "output/bigfoot.mp4",
+    prev2_name="ネッシー",
+    prev2_lat=57.2741223,
+    prev2_lon=-4.4849684,
+    prev_name="チュパカブラ",
+    prev_lat=18.374,
+    prev_lon=-65.899,
+    name="ビッグフット",
+    lat=41.252,
+    lon=-123.632,
     height=350000,
     duration=5,
     width=1920,
