@@ -28,29 +28,47 @@ python -m http.server 8000
 
 ## MP4出力
 
-Cesiumの描画を30fpsで録画し、入力した解像度のMP4として保存します。
+WebCodecsでH.264を30fps固定タイムスタンプでエンコードし、mp4-muxerで通常MP4として生成します。
 
-ブラウザがCanvasのMP4 MediaRecorderに対応していない場合は、開始前に非対応メッセージを表示します。
+- 30fps固定
+- 1秒ごとにキーフレーム
+- `fastStart` でMP4メタデータを先頭配置
+- MediaRecorderのfragmented MP4は使用しません
+
+H.264 WebCodecsに対応していないブラウザでは開始前に非対応メッセージを表示します。
 
 ## URLパラメータ
 
-外部処理から直接値を渡せます。
+GitHub PagesのURLに直接パラメータを付けて、画面操作なしでMP4生成・ダウンロードを開始できます。
 
 ```text
-?name=Story&lat=35.681236&lon=139.767125&height=350000&duration=5&width=1920&heightPx=1080&video=https%3A%2F%2Fexample.com%2Fmovie.mp4&autoplay=1
+?height=350000&duration=5&width=1920&heightPx=1080&download=1&filename=nessie
+```
+
+短縮形:
+
+```text
+?w=1920&h=1080&duration=5&download=1&filename=nessie
+```
+
+次動画も指定する場合:
+
+```text
+?w=1920&h=1080&duration=5&next=https%3A%2F%2Fexample.com%2Fmovie.mp4&download=1&filename=nessie
 ```
 
 対応項目:
 
-- `name`: 地点名
-- `lat`: 緯度
-- `lon`: 経度
 - `height`: 到着高度(m)
 - `duration`: フライト時間(秒)
-- `width`: MP4出力幅(px)
-- `heightPx`: MP4出力高さ(px)
-- `video`: フライト後に表示する動画URL
-- `autoplay=1`: 読み込み後に自動開始
+- `width` / `w`: MP4出力幅(px)
+- `heightPx` / `h`: MP4出力高さ(px)
+- `video` / `next`: フライト後に表示する動画URL
+- `filename`: ダウンロードするMP4名（拡張子省略可）
+- `download=1`: 読み込み後に自動生成・自動ダウンロード
+- `autoplay=1` / `run=1`: `download=1` と同様に自動開始
+
+現在の遷移先はネッシー（ネス湖）に固定されています。
 
 ## GitHub Pages
 
