@@ -6,12 +6,17 @@ const BLUE_MARBLE_URL =
 const RECORD_FPS = 30;
 const PRE_ROLL_MS = 500;
 const POST_ROLL_MS = 500;
-const ROUTE_PRELOAD_SAMPLES = 18;
+const ROUTE_PRELOAD_SAMPLES_PER_SECOND = 18;
+const ROUTE_PRELOAD_MIN_SAMPLES = 72;
+const ROUTE_PRELOAD_MAX_SAMPLES = 180;
 const ROUTE_PRELOAD_STEP_TIMEOUT_MS = 6000;
 const ROUTE_PRELOAD_FINAL_TIMEOUT_MS = 18000;
-const ROUTE_TILE_CACHE_SIZE = 2048;
+const ROUTE_TILE_CACHE_SIZE = 3072;
 const TILE_QUEUE_START_GRACE_MS = 350;
 const TILE_QUEUE_QUIET_MS = 250;
+const FLIGHT_START_LONGITUDE = 20;
+const FLIGHT_START_LATITUDE = 18;
+const FLIGHT_START_HEIGHT = 22000000;
 
 
 const elements = {
@@ -119,7 +124,11 @@ function setHomeView(animated = true) {
   }
 
   const options = {
-    destination: Cesium.Cartesian3.fromDegrees(20, 18, 22000000),
+    destination: Cesium.Cartesian3.fromDegrees(
+      FLIGHT_START_LONGITUDE,
+      FLIGHT_START_LATITUDE,
+      FLIGHT_START_HEIGHT
+    ),
     orientation: {
       heading: Cesium.Math.toRadians(0),
       pitch: Cesium.Math.toRadians(-90),
@@ -252,6 +261,55 @@ function getNadirCameraView(story) {
   };
 }
 
+function createFlightPath(story) {
+  const start = Cesium.Cartographic.fromDegrees(
+    FLIGHT_START_LONGITUDE,
+    FLIGHT_START_LATITUDE,
+    0
+  );
+  const end = Cesium.Cartographic.fromDegrees(
+    story.longitude,
+    story.latitude,
+    0
+  );
+
+  return {
+    geodesic: new Cesium.EllipsoidGeodesic(
+      start,
+      end,
+      Cesium.Ellipsoid.WGS84
+    ),
+    startHeightLog: Math.log(FLIGHT_START_HEIGHT),
+    endHeightLog: Math.log(story.height),
+  };
+}
+
+function setCameraFlightProgress(path, progress) {
+  const clamped = Cesium.Math.clamp(progress, 0, 1);
+  const eased = Cesium.EasingFunction.CUBIC_IN_OUT(clamped);
+  const surface = path.geodesic.interpolateUsingFraction(eased);
+  const height = Math.exp(
+    path.startHeightLog +
+      (path.endHeightLog - path.startHeightLog) * eased
+  );
+
+  viewer.camera.setView({
+    destination: Cesium.Cartesian3.fromRadians(
+      surface.longitude,
+      surface.latitude,
+      height
+    ),
+    orientation: {
+      heading: 0,
+      pitch: Cesium.Math.toRadians(-90),
+      roll: 0,
+    },
+  });
+
+  updateImageryBlend();
+  viewer.scene.requestRender();
+}
+
 function flyToStory(
   story,
   {
@@ -259,37 +317,47 @@ function flyToStory(
     showMarkerAtEnd = true,
   } = {}
 ) {
+  const path = createFlightPath(story);
+  const durationMs = Math.max(1, duration * 1000);
+
   return new Promise((resolve) => {
-    const view = getNadirCameraView(story);
+    const startedAt = performance.now();
 
-    viewer.camera.flyTo({
-      destination: view.destination,
-      orientation: {
-        direction: view.direction,
-        up: view.up,
-      },
-      duration,
-      easingFunction: Cesium.EasingFunction.CUBIC_IN_OUT,
-      complete: () => {
-        viewer.camera.setView({
-          destination: view.destination,
-          orientation: {
-            direction: view.direction,
-            up: view.up,
-          },
-        });
+    function frame(now) {
+      const progress = Cesium.Math.clamp(
+        (now - startedAt) / durationMs,
+        0,
+        1
+      );
 
-        if (showMarkerAtEnd) {
-          showMarker(story);
-        } else {
-          clearDestinationMarker();
-        }
+      setCameraFlightProgress(path, progress);
 
-        viewer.scene.requestRender();
-        resolve();
-      },
-      cancel: resolve,
-    });
+      if (progress < 1) {
+        window.requestAnimationFrame(frame);
+        return;
+      }
+
+      const view = getNadirCameraView(story);
+      viewer.camera.setView({
+        destination: view.destination,
+        orientation: {
+          direction: view.direction,
+          up: view.up,
+        },
+      });
+
+      if (showMarkerAtEnd) {
+        showMarker(story);
+      } else {
+        clearDestinationMarker();
+      }
+
+      updateImageryBlend();
+      viewer.scene.requestRender();
+      resolve();
+    }
+
+    window.requestAnimationFrame(frame);
   });
 }
 
@@ -432,43 +500,8 @@ function waitForCurrentViewTiles(timeoutMs) {
   });
 }
 
-function shortestLongitudeDelta(startLongitude, endLongitude) {
-  return ((((endLongitude - startLongitude) + 540) % 360) - 180);
-}
-
-function preloadSampleView(story, t) {
-  const startLongitude = 20;
-  const startLatitude = 18;
-  const startHeight = 22000000;
-  const eased = Cesium.EasingFunction.CUBIC_IN_OUT(t);
-
-  const longitude =
-    startLongitude +
-    shortestLongitudeDelta(startLongitude, story.longitude) * eased;
-  const latitude =
-    startLatitude + (story.latitude - startLatitude) * eased;
-
-  const startLogHeight = Math.log(startHeight);
-  const endLogHeight = Math.log(story.height);
-  const height = Math.exp(
-    startLogHeight + (endLogHeight - startLogHeight) * eased
-  );
-
-  viewer.camera.setView({
-    destination: Cesium.Cartesian3.fromDegrees(
-      longitude,
-      latitude,
-      height
-    ),
-    orientation: {
-      heading: 0,
-      pitch: Cesium.Math.toRadians(-90),
-      roll: 0,
-    },
-  });
-
-  updateImageryBlend();
-  viewer.scene.requestRender();
+function preloadSampleView(path, progress) {
+  setCameraFlightProgress(path, progress);
 }
 
 function setPreloadOverlay(visible, text = "経路を事前読み込み中") {
@@ -488,21 +521,38 @@ async function preloadFlightPath(story) {
   const globe = viewer.scene.globe;
   const previousCacheSize = globe.tileCacheSize;
   const previousPreloadSiblings = globe.preloadSiblings;
+  const path = createFlightPath(story);
+  const sampleCount = Math.min(
+    ROUTE_PRELOAD_MAX_SAMPLES,
+    Math.max(
+      ROUTE_PRELOAD_MIN_SAMPLES,
+      Math.ceil(
+        story.duration * ROUTE_PRELOAD_SAMPLES_PER_SECOND
+      )
+    )
+  );
 
-  globe.tileCacheSize = Math.max(previousCacheSize, ROUTE_TILE_CACHE_SIZE);
+  globe.tileCacheSize = Math.max(
+    previousCacheSize,
+    ROUTE_TILE_CACHE_SIZE
+  );
   globe.preloadSiblings = false;
 
   try {
-    for (let index = 0; index < ROUTE_PRELOAD_SAMPLES; index += 1) {
-      const linearT = index / (ROUTE_PRELOAD_SAMPLES - 1);
-      const t = 1 - Math.pow(1 - linearT, 1.65);
-      const progress = Math.round(linearT * 100);
+    for (let index = 0; index < sampleCount; index += 1) {
+      const progress = index / (sampleCount - 1);
+      const percent = Math.round(progress * 100);
 
-      setPreloadOverlay(true, "経路を事前読み込み中 " + progress + "%");
-      preloadSampleView(story, t);
+      setPreloadOverlay(
+        true,
+        "経路を事前読み込み中 " + percent + "%"
+      );
+      preloadSampleView(path, progress);
 
       await waitForAnimationFrames(2);
-      await waitForCurrentViewTiles(ROUTE_PRELOAD_STEP_TIMEOUT_MS);
+      await waitForCurrentViewTiles(
+        ROUTE_PRELOAD_STEP_TIMEOUT_MS
+      );
     }
 
     const finalView = getNadirCameraView(story);
@@ -517,7 +567,9 @@ async function preloadFlightPath(story) {
 
     setPreloadOverlay(true, "到着地点を読み込み中");
     await waitForAnimationFrames(3);
-    await waitForCurrentViewTiles(ROUTE_PRELOAD_FINAL_TIMEOUT_MS);
+    await waitForCurrentViewTiles(
+      ROUTE_PRELOAD_FINAL_TIMEOUT_MS
+    );
 
     setHomeView(false);
     updateImageryBlend();
