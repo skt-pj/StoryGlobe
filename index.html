@@ -6,7 +6,7 @@
   <title>StoryGlobe</title>
   <meta name="description" content="Fly from a satellite globe to a story location and export the flight as MP4.">
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/cesium@1.145/Build/Cesium/Widgets/widgets.css">
-  <link rel="stylesheet" href="./styles.css?v=20260920-2">
+  <link rel="stylesheet" href="./styles.css?v=20260920-5">
   <script>
     window.CESIUM_BASE_URL = "https://cdn.jsdelivr.net/npm/cesium@1.145/Build/Cesium/";
   </script>
@@ -81,6 +81,8 @@
       </div>
     </div>
 
+    <div id="transitionFlash" class="transition-flash" aria-hidden="true"></div>
+
     <section id="videoOverlay" class="video-overlay" aria-hidden="true">
       <div class="video-shell">
         <video id="storyVideo" playsinline controls preload="metadata"></video>
@@ -95,6 +97,6 @@
     </section>
   </main>
 
-  <script src="./app.js?v=20260920-4"></script>
+  <script src="./app.js?v=20260920-5"></script>
 </body>
 </html>
