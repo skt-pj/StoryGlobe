@@ -12,6 +12,12 @@ const NESSIE_DESTINATION = Object.freeze({
 const SETTINGS_COOKIE_NAME = "storyglobeSettings";
 const SETTINGS_COOKIE_MAX_AGE = 60 * 60 * 24 * 365;
 const DEFAULT_FORM_SETTINGS = Object.freeze({
+  previousPreviousName: NESSIE_DESTINATION.name,
+  previousPreviousLatitude: NESSIE_DESTINATION.latitude,
+  previousPreviousLongitude: NESSIE_DESTINATION.longitude,
+  previousName: NESSIE_DESTINATION.name,
+  previousLatitude: NESSIE_DESTINATION.latitude,
+  previousLongitude: NESSIE_DESTINATION.longitude,
   name: NESSIE_DESTINATION.name,
   latitude: NESSIE_DESTINATION.latitude,
   longitude: NESSIE_DESTINATION.longitude,
@@ -40,14 +46,26 @@ const ROUTE_PRELOAD_FINAL_TIMEOUT_MS = 18000;
 const ROUTE_TILE_CACHE_SIZE = 3072;
 const TILE_QUEUE_START_GRACE_MS = 350;
 const TILE_QUEUE_QUIET_MS = 250;
-const FLIGHT_START_LONGITUDE = 20;
-const FLIGHT_START_LATITUDE = 18;
-const FLIGHT_START_HEIGHT = 22000000;
+const TRAIL_SAMPLE_COUNT = 96;
+const TRAIL_HEIGHT_METERS = 12000;
+const MAX_FLIGHT_PEAK_HEIGHT = 6500000;
 
 
 const elements = {
   app: document.getElementById("app"),
   cesiumContainer: document.getElementById("cesiumContainer"),
+  previousPreviousName: document.getElementById(
+    "previousPreviousNameInput"
+  ),
+  previousPreviousLat: document.getElementById(
+    "previousPreviousLatInput"
+  ),
+  previousPreviousLon: document.getElementById(
+    "previousPreviousLonInput"
+  ),
+  previousName: document.getElementById("previousNameInput"),
+  previousLat: document.getElementById("previousLatInput"),
+  previousLon: document.getElementById("previousLonInput"),
   name: document.getElementById("nameInput"),
   lat: document.getElementById("latInput"),
   lon: document.getElementById("lonInput"),
@@ -70,6 +88,8 @@ const elements = {
 
 let viewer;
 let destinationMarker;
+let historicalTrailEntity;
+let currentTrailEntity;
 let portalImageEntity;
 let portalRingEntityA;
 let portalRingEntityB;
