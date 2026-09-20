@@ -12,7 +12,10 @@ const NESSIE_DESTINATION = Object.freeze({
 
 const RECORD_FPS = 30;
 const PRE_ROLL_MS = 500;
-const POST_ROLL_MS = 2500;
+const ARRIVAL_HOLD_MS = 2000;
+const WORMHOLE_DIVE_MS = 1700;
+const WHITEOUT_HOLD_MS = 350;
+const PORTAL_TEXTURE_SIZE = 768;
 const ROUTE_PRELOAD_SAMPLES_PER_SECOND = 18;
 const ROUTE_PRELOAD_MIN_SAMPLES = 72;
 const ROUTE_PRELOAD_MAX_SAMPLES = 180;
@@ -42,6 +45,7 @@ const elements = {
   status: document.getElementById("status"),
   preloadOverlay: document.getElementById("preloadOverlay"),
   preloadText: document.getElementById("preloadText"),
+  transitionFlash: document.getElementById("transitionFlash"),
   overlay: document.getElementById("videoOverlay"),
   storyVideo: document.getElementById("storyVideo"),
   videoTitle: document.getElementById("videoTitle"),
@@ -50,12 +54,16 @@ const elements = {
 
 let viewer;
 let destinationMarker;
+let portalImageEntity;
+let portalRingEntityA;
+let portalRingEntityB;
 let globalImageryLayer;
 let detailImageryLayer;
 let satelliteReady = false;
 let recordingViewportState = null;
 let nessieImageReady = false;
 let nessieImageElement = null;
+let transitionWhiteAlpha = 0;
 
 function setStatus(message) {
   elements.status.textContent = message;
@@ -194,165 +202,351 @@ function setHomeView(animated = true) {
   setStatus("地球全景");
 }
 
-function clearDestinationMarker() {
-  if (destinationMarker) {
-    viewer.entities.remove(destinationMarker);
-    destinationMarker = null;
+function setTransitionWhiteout(alpha) {
+  transitionWhiteAlpha = Cesium.Math.clamp(alpha, 0, 1);
+
+  if (!elements.transitionFlash) {
+    return;
   }
+
+  elements.transitionFlash.style.opacity =
+    String(transitionWhiteAlpha);
+  elements.transitionFlash.classList.toggle(
+    "visible",
+    transitionWhiteAlpha > 0.001
+  );
+  elements.transitionFlash.setAttribute(
+    "aria-hidden",
+    transitionWhiteAlpha > 0.001 ? "false" : "true"
+  );
 }
 
-function getNessieOverlayLayout(story) {
-  const outputWidth = story.outputWidth;
-  const outputHeight = story.outputHeight;
-  const outputAspect = outputWidth / outputHeight;
-  const shortSide = Math.min(outputWidth, outputHeight);
-
-  const margin = Math.max(24, Math.round(shortSide * 0.045));
-  const padding = Math.max(10, Math.round(shortSide * 0.012));
-  const border = Math.max(2, Math.round(shortSide * 0.003));
-
-  const sourceWidth = nessieImageElement?.naturalWidth || 1024;
-  const sourceHeight = nessieImageElement?.naturalHeight || 1536;
-  const sourceAspect = sourceWidth / sourceHeight;
-
-  const landscape = outputAspect >= 1.2;
-  const maxCardWidth = Math.max(
-    1,
-    Math.min(
-      outputWidth - margin * 2,
-      outputWidth * (landscape ? 0.28 : 0.56)
-    )
-  );
-  const maxCardHeight = Math.max(
-    1,
-    Math.min(
-      outputHeight - margin * 2,
-      outputHeight * (landscape ? 0.58 : 0.38)
-    )
-  );
-
-  const maxImageWidth = Math.max(1, maxCardWidth - padding * 2);
-  const maxImageHeight = Math.max(1, maxCardHeight - padding * 2);
-
-  let imageWidth = Math.min(
-    maxImageWidth,
-    maxImageHeight * sourceAspect
-  );
-  let imageHeight = imageWidth / sourceAspect;
-
-  imageWidth = Math.max(2, Math.floor(imageWidth / 2) * 2);
-  imageHeight = Math.max(2, Math.floor(imageHeight / 2) * 2);
-
-  const cardWidth = imageWidth + padding * 2;
-  const cardHeight = imageHeight + padding * 2;
-
-  const minOffsetX =
-    -outputWidth / 2 + margin + cardWidth / 2;
-  const maxOffsetX =
-    outputWidth / 2 - margin - cardWidth / 2;
-  const minOffsetY =
-    -outputHeight / 2 + margin + cardHeight / 2;
-  const maxOffsetY =
-    outputHeight / 2 - margin - cardHeight / 2;
-
-  let offsetX;
-  let offsetY;
-
-  if (landscape) {
-    offsetX = maxOffsetX;
-    offsetY = -outputHeight * 0.05;
-  } else {
-    offsetX = 0;
-    offsetY = minOffsetY;
+function clearDestinationMarker() {
+  for (const entity of [
+    destinationMarker,
+    portalImageEntity,
+    portalRingEntityA,
+    portalRingEntityB,
+  ]) {
+    if (entity) {
+      viewer.entities.remove(entity);
+    }
   }
 
-  offsetX = Math.round(
-    Cesium.Math.clamp(offsetX, minOffsetX, maxOffsetX)
+  destinationMarker = null;
+  portalImageEntity = null;
+  portalRingEntityA = null;
+  portalRingEntityB = null;
+}
+
+function getPortalLayout(story) {
+  const outputWidth = story.outputWidth;
+  const outputHeight = story.outputHeight;
+  const shortSide = Math.min(outputWidth, outputHeight);
+  const margin = Math.max(24, Math.round(shortSide * 0.045));
+  const gap = Math.max(30, Math.round(shortSide * 0.045));
+
+  const maxDiameter = Math.min(
+    outputWidth - margin * 2,
+    outputHeight - margin * 2
   );
-  offsetY = Math.round(
-    Cesium.Math.clamp(offsetY, minOffsetY, maxOffsetY)
+  const diameter = Math.max(
+    120,
+    Math.min(
+      Math.round(shortSide * 0.32),
+      Math.round(maxDiameter * 0.46)
+    )
   );
 
-  const centerX = outputWidth / 2 + offsetX;
-  const centerY = outputHeight / 2 + offsetY;
+  const offsetY = -Math.round(diameter / 2 + gap);
+  const finalDiameter = Math.ceil(
+    Math.hypot(outputWidth, outputHeight) * 1.48
+  );
 
   return {
-    cardWidth,
-    cardHeight,
-    imageWidth,
-    imageHeight,
-    padding,
-    border,
-    offsetX,
+    diameter,
+    offsetX: 0,
     offsetY,
-    left: Math.round(centerX - cardWidth / 2),
-    right: Math.round(centerX + cardWidth / 2),
-    top: Math.round(centerY - cardHeight / 2),
-    bottom: Math.round(centerY + cardHeight / 2),
-    margin,
+    finalDiameter,
+    labelOffsetY: Math.max(
+      58,
+      Math.round(shortSide * 0.055)
+    ),
   };
 }
 
-function createNessieCard(layout) {
+function drawNessieCover(context, size, radius) {
+  if (!nessieImageElement) {
+    return;
+  }
+
+  const sourceWidth = nessieImageElement.naturalWidth || 1024;
+  const sourceHeight = nessieImageElement.naturalHeight || 1536;
+  const cropSize = Math.min(sourceWidth, sourceHeight);
+  const sourceX = Math.round((sourceWidth - cropSize) / 2);
+  const sourceY = 0;
+  const center = size / 2;
+
+  context.save();
+  context.beginPath();
+  context.arc(center, center, radius, 0, Math.PI * 2);
+  context.clip();
+
+  context.drawImage(
+    nessieImageElement,
+    sourceX,
+    sourceY,
+    cropSize,
+    cropSize,
+    center - radius,
+    center - radius,
+    radius * 2,
+    radius * 2
+  );
+
+  const vignette = context.createRadialGradient(
+    center,
+    center,
+    radius * 0.45,
+    center,
+    center,
+    radius
+  );
+  vignette.addColorStop(0, "rgba(0, 0, 0, 0)");
+  vignette.addColorStop(0.78, "rgba(0, 0, 0, 0.02)");
+  vignette.addColorStop(1, "rgba(0, 0, 0, 0.48)");
+  context.fillStyle = vignette;
+  context.fillRect(
+    center - radius,
+    center - radius,
+    radius * 2,
+    radius * 2
+  );
+  context.restore();
+}
+
+function createPortalPhotoTexture() {
+  const size = PORTAL_TEXTURE_SIZE;
   const canvas = document.createElement("canvas");
-  canvas.width = layout.cardWidth;
-  canvas.height = layout.cardHeight;
+  canvas.width = size;
+  canvas.height = size;
 
   const context = canvas.getContext("2d");
   if (!context) {
     return nessieImageElement || NESSIE_IMAGE_URL;
   }
 
-  context.fillStyle = "rgba(4, 8, 14, 0.94)";
-  context.fillRect(0, 0, canvas.width, canvas.height);
+  const center = size / 2;
+  const radius = size * 0.355;
 
-  context.strokeStyle = "rgba(255, 255, 255, 0.92)";
-  context.lineWidth = layout.border;
-  context.strokeRect(
-    layout.border / 2,
-    layout.border / 2,
-    canvas.width - layout.border,
-    canvas.height - layout.border
-  );
+  context.clearRect(0, 0, size, size);
+  drawNessieCover(context, size, radius);
 
-  if (nessieImageElement) {
-    context.drawImage(
-      nessieImageElement,
-      layout.padding,
-      layout.padding,
-      layout.imageWidth,
-      layout.imageHeight
-    );
-  }
+  context.save();
+  context.beginPath();
+  context.arc(center, center, radius, 0, Math.PI * 2);
+  context.strokeStyle = "rgba(238, 251, 255, 0.96)";
+  context.lineWidth = size * 0.012;
+  context.shadowColor = "rgba(150, 230, 255, 0.9)";
+  context.shadowBlur = size * 0.045;
+  context.stroke();
+  context.restore();
 
   return canvas;
 }
 
+function createPortalEnergyTexture(variant = 0) {
+  const size = PORTAL_TEXTURE_SIZE;
+  const canvas = document.createElement("canvas");
+  canvas.width = size;
+  canvas.height = size;
+
+  const context = canvas.getContext("2d");
+  if (!context) {
+    return canvas;
+  }
+
+  const center = size / 2;
+  const baseRadius = size * (variant === 0 ? 0.405 : 0.435);
+  const phaseOffset = variant * 1.73;
+
+  context.clearRect(0, 0, size, size);
+  context.save();
+  context.translate(center, center);
+  context.globalCompositeOperation = "lighter";
+
+  const halo = context.createRadialGradient(
+    0,
+    0,
+    baseRadius * 0.74,
+    0,
+    0,
+    baseRadius * 1.18
+  );
+  halo.addColorStop(0, "rgba(70, 180, 255, 0)");
+  halo.addColorStop(
+    0.72,
+    variant === 0
+      ? "rgba(105, 220, 255, 0.18)"
+      : "rgba(210, 245, 255, 0.12)"
+  );
+  halo.addColorStop(1, "rgba(255, 255, 255, 0)");
+  context.fillStyle = halo;
+  context.beginPath();
+  context.arc(0, 0, baseRadius * 1.2, 0, Math.PI * 2);
+  context.fill();
+
+  for (let index = 0; index < 14; index += 1) {
+    const start =
+      phaseOffset +
+      (index / 14) * Math.PI * 2 +
+      Math.sin(index * 1.91) * 0.16;
+    const span = 0.16 + (index % 4) * 0.055;
+    const radius =
+      baseRadius +
+      Math.sin(index * 2.17 + phaseOffset) * size * 0.018;
+
+    context.beginPath();
+    context.arc(0, 0, radius, start, start + span);
+    context.lineCap = "round";
+    context.lineWidth =
+      size * (variant === 0 ? 0.018 : 0.011);
+    context.strokeStyle =
+      variant === 0
+        ? "rgba(120, 225, 255, 0.88)"
+        : "rgba(245, 252, 255, 0.82)";
+    context.shadowColor =
+      variant === 0
+        ? "rgba(90, 205, 255, 0.98)"
+        : "rgba(220, 250, 255, 0.96)";
+    context.shadowBlur = size * (variant === 0 ? 0.04 : 0.028);
+    context.stroke();
+  }
+
+  const particleCount = variant === 0 ? 48 : 34;
+  for (let index = 0; index < particleCount; index += 1) {
+    const angle =
+      phaseOffset +
+      index * 2.399963229728653 +
+      Math.sin(index * 0.73) * 0.12;
+    const radialBand =
+      baseRadius +
+      size * (0.035 + (index % 7) * 0.006);
+    const length = size * (0.016 + (index % 5) * 0.006);
+    const width = size * (0.0022 + (index % 3) * 0.0009);
+
+    const x1 = Math.cos(angle) * radialBand;
+    const y1 = Math.sin(angle) * radialBand;
+    const x2 = Math.cos(angle) * (radialBand + length);
+    const y2 = Math.sin(angle) * (radialBand + length);
+
+    context.beginPath();
+    context.moveTo(x1, y1);
+    context.lineTo(x2, y2);
+    context.lineWidth = width;
+    context.lineCap = "round";
+    context.strokeStyle =
+      variant === 0
+        ? "rgba(145, 230, 255, 0.68)"
+        : "rgba(255, 255, 255, 0.58)";
+    context.stroke();
+  }
+
+  context.restore();
+  return canvas;
+}
+
+function setPortalOpacity(alpha) {
+  const clamped = Cesium.Math.clamp(alpha, 0, 1);
+
+  if (destinationMarker) {
+    destinationMarker.point.color =
+      Cesium.Color.WHITE.withAlpha(clamped);
+    destinationMarker.point.outlineColor =
+      Cesium.Color.BLACK.withAlpha(clamped);
+    destinationMarker.label.fillColor =
+      Cesium.Color.WHITE.withAlpha(clamped);
+    destinationMarker.label.outlineColor =
+      Cesium.Color.BLACK.withAlpha(clamped);
+  }
+}
+
+function updatePortalAnimation(
+  story,
+  elapsedMs,
+  diveProgress = 0
+) {
+  if (
+    !portalImageEntity ||
+    !portalRingEntityA ||
+    !portalRingEntityB
+  ) {
+    return;
+  }
+
+  const layout = getPortalLayout(story);
+  const progress = Cesium.Math.clamp(diveProgress, 0, 1);
+  const eased = 1 - Math.pow(1 - progress, 4);
+  const pulse =
+    1 +
+    Math.sin(elapsedMs * 0.0065) *
+      (progress > 0 ? 0.035 : 0.025);
+
+  const diameter =
+    layout.diameter +
+    (layout.finalDiameter - layout.diameter) * eased;
+  const offsetY = Math.round(layout.offsetY * (1 - eased));
+  const imageDiameter = diameter * 0.72;
+
+  portalImageEntity.billboard.width = imageDiameter;
+  portalImageEntity.billboard.height = imageDiameter;
+  portalImageEntity.billboard.pixelOffset =
+    new Cesium.Cartesian2(0, offsetY);
+
+  portalRingEntityA.billboard.width = diameter * pulse;
+  portalRingEntityA.billboard.height = diameter * pulse;
+  portalRingEntityA.billboard.pixelOffset =
+    new Cesium.Cartesian2(0, offsetY);
+  portalRingEntityA.billboard.rotation =
+    elapsedMs * (0.00042 + progress * 0.00092);
+
+  portalRingEntityB.billboard.width =
+    diameter * 1.08 * (2 - pulse);
+  portalRingEntityB.billboard.height =
+    diameter * 1.08 * (2 - pulse);
+  portalRingEntityB.billboard.pixelOffset =
+    new Cesium.Cartesian2(0, offsetY);
+  portalRingEntityB.billboard.rotation =
+    -elapsedMs * (0.00031 + progress * 0.00078);
+
+  setPortalOpacity(1 - eased);
+
+  const whiteProgress = Cesium.Math.clamp(
+    (progress - 0.58) / 0.42,
+    0,
+    1
+  );
+  setTransitionWhiteout(Math.pow(whiteProgress, 1.65));
+
+  viewer.scene.requestRender();
+}
+
 function showMarker(story) {
   clearDestinationMarker();
+  setTransitionWhiteout(0);
 
+  const layout = getPortalLayout(story);
   const markerScale = Math.max(1, story.outputHeight / 1080);
   const pointSize = Math.round(20 * markerScale);
   const outlineWidth = Math.max(4, Math.round(4 * markerScale));
   const fontSize = Math.round(36 * markerScale);
-  const labelOffset = Math.round(58 * markerScale);
-  const layout = getNessieOverlayLayout(story);
-  const card = createNessieCard(layout);
+  const position = Cesium.Cartesian3.fromDegrees(
+    story.longitude,
+    story.latitude
+  );
 
   destinationMarker = viewer.entities.add({
-    position: Cesium.Cartesian3.fromDegrees(story.longitude, story.latitude),
-    billboard: {
-      image: card,
-      width: layout.cardWidth,
-      height: layout.cardHeight,
-      horizontalOrigin: Cesium.HorizontalOrigin.CENTER,
-      verticalOrigin: Cesium.VerticalOrigin.CENTER,
-      pixelOffset: new Cesium.Cartesian2(
-        layout.offsetX,
-        layout.offsetY
-      ),
-      disableDepthTestDistance: Number.POSITIVE_INFINITY,
-    },
+    position,
     point: {
       pixelSize: pointSize,
       color: Cesium.Color.WHITE,
@@ -367,14 +561,146 @@ function showMarker(story) {
       outlineColor: Cesium.Color.BLACK,
       outlineWidth: Math.max(5, Math.round(5 * markerScale)),
       style: Cesium.LabelStyle.FILL_AND_OUTLINE,
-      pixelOffset: new Cesium.Cartesian2(0, labelOffset),
+      pixelOffset: new Cesium.Cartesian2(
+        0,
+        layout.labelOffsetY
+      ),
       disableDepthTestDistance: Number.POSITIVE_INFINITY,
     },
+  });
+
+  portalImageEntity = viewer.entities.add({
+    position,
+    billboard: {
+      image: createPortalPhotoTexture(),
+      width: layout.diameter * 0.72,
+      height: layout.diameter * 0.72,
+      horizontalOrigin: Cesium.HorizontalOrigin.CENTER,
+      verticalOrigin: Cesium.VerticalOrigin.CENTER,
+      pixelOffset: new Cesium.Cartesian2(
+        layout.offsetX,
+        layout.offsetY
+      ),
+      disableDepthTestDistance: Number.POSITIVE_INFINITY,
+    },
+  });
+
+  portalRingEntityA = viewer.entities.add({
+    position,
+    billboard: {
+      image: createPortalEnergyTexture(0),
+      width: layout.diameter,
+      height: layout.diameter,
+      horizontalOrigin: Cesium.HorizontalOrigin.CENTER,
+      verticalOrigin: Cesium.VerticalOrigin.CENTER,
+      pixelOffset: new Cesium.Cartesian2(
+        layout.offsetX,
+        layout.offsetY
+      ),
+      disableDepthTestDistance: Number.POSITIVE_INFINITY,
+    },
+  });
+
+  portalRingEntityB = viewer.entities.add({
+    position,
+    billboard: {
+      image: createPortalEnergyTexture(1),
+      width: layout.diameter * 1.08,
+      height: layout.diameter * 1.08,
+      horizontalOrigin: Cesium.HorizontalOrigin.CENTER,
+      verticalOrigin: Cesium.VerticalOrigin.CENTER,
+      pixelOffset: new Cesium.Cartesian2(
+        layout.offsetX,
+        layout.offsetY
+      ),
+      disableDepthTestDistance: Number.POSITIVE_INFINITY,
+    },
+  });
+
+  updatePortalAnimation(story, 0, 0);
+}
+
+function animatePortalHold(story, durationMs) {
+  return new Promise((resolve) => {
+    const startedAt = performance.now();
+
+    function frame(now) {
+      const elapsed = now - startedAt;
+      updatePortalAnimation(story, elapsed, 0);
+
+      if (elapsed >= durationMs) {
+        resolve();
+        return;
+      }
+
+      window.requestAnimationFrame(frame);
+    }
+
+    window.requestAnimationFrame(frame);
+  });
+}
+
+function animatePortalDive(story, durationMs) {
+  return new Promise((resolve) => {
+    const startedAt = performance.now();
+
+    function frame(now) {
+      const elapsed = now - startedAt;
+      const progress = Cesium.Math.clamp(
+        elapsed / durationMs,
+        0,
+        1
+      );
+
+      updatePortalAnimation(story, elapsed, progress);
+
+      if (progress >= 1) {
+        setTransitionWhiteout(1);
+        resolve();
+        return;
+      }
+
+      window.requestAnimationFrame(frame);
+    }
+
+    window.requestAnimationFrame(frame);
+  });
+}
+
+async function fadeTransitionWhiteout(
+  targetAlpha,
+  durationMs = 650
+) {
+  const startAlpha = transitionWhiteAlpha;
+  const startedAt = performance.now();
+
+  return new Promise((resolve) => {
+    function frame(now) {
+      const progress = Cesium.Math.clamp(
+        (now - startedAt) / Math.max(1, durationMs),
+        0,
+        1
+      );
+      const eased = 1 - Math.pow(1 - progress, 3);
+      setTransitionWhiteout(
+        startAlpha + (targetAlpha - startAlpha) * eased
+      );
+
+      if (progress >= 1) {
+        resolve();
+        return;
+      }
+
+      window.requestAnimationFrame(frame);
+    }
+
+    window.requestAnimationFrame(frame);
   });
 }
 
 async function openVideo(story) {
   if (!story.videoUrl) {
+    await fadeTransitionWhiteout(0, 650);
     return;
   }
 
@@ -382,12 +708,26 @@ async function openVideo(story) {
   elements.storyVideo.src = story.videoUrl;
   elements.overlay.classList.add("visible");
   elements.overlay.setAttribute("aria-hidden", "false");
+  elements.storyVideo.load();
+
+  await Promise.race([
+    new Promise((resolve) => {
+      elements.storyVideo.addEventListener(
+        "canplay",
+        resolve,
+        { once: true }
+      );
+    }),
+    wait(2500),
+  ]);
 
   try {
     await elements.storyVideo.play();
   } catch {
     setStatus("動画を表示しました。再生ボタンを押してください");
   }
+
+  await fadeTransitionWhiteout(0, 800);
 }
 
 function closeVideo() {
@@ -396,6 +736,7 @@ function closeVideo() {
   elements.storyVideo.load();
   elements.overlay.classList.remove("visible");
   elements.overlay.setAttribute("aria-hidden", "true");
+  setTransitionWhiteout(0);
 }
 
 function getNadirCameraView(story) {
@@ -885,6 +1226,20 @@ async function recordFlightAsMp4(story, mimeType) {
       outputCanvas.height
     );
     drawAttribution(context, outputCanvas);
+
+    if (transitionWhiteAlpha > 0) {
+      context.fillStyle =
+        "rgba(255, 255, 255, " +
+        transitionWhiteAlpha +
+        ")";
+      context.fillRect(
+        0,
+        0,
+        outputCanvas.width,
+        outputCanvas.height
+      );
+    }
+
     animationFrameId = window.requestAnimationFrame(drawFrame);
   }
 
@@ -910,7 +1265,9 @@ async function recordFlightAsMp4(story, mimeType) {
   try {
     await wait(PRE_ROLL_MS);
     await flyToStory(story);
-    await wait(POST_ROLL_MS);
+    await animatePortalHold(story, ARRIVAL_HOLD_MS);
+    await animatePortalDive(story, WORMHOLE_DIVE_MS);
+    await wait(WHITEOUT_HOLD_MS);
     recorder.stop();
     return await finished;
   } finally {
@@ -944,6 +1301,7 @@ async function runStory() {
 
   elements.play.disabled = true;
   closeVideo();
+  setTransitionWhiteout(0);
   elements.app.classList.add("recording");
 
   try {
