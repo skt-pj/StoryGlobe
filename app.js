@@ -11,6 +11,9 @@ const NESSIE_DESTINATION = Object.freeze({
 });
 
 const RECORD_FPS = 30;
+const KEYFRAME_INTERVAL_FRAMES = RECORD_FPS;
+const MP4_MUXER_MODULE_URL =
+  "./vendor/mp4-muxer.mjs?v=5.2.2";
 const PRE_ROLL_MS = 500;
 const ARRIVAL_HOLD_MS = 2000;
 const WORMHOLE_DIVE_MS = 1700;
@@ -64,6 +67,8 @@ let recordingViewportState = null;
 let nessieImageReady = false;
 let nessieImageElement = null;
 let transitionWhiteAlpha = 0;
+let mp4MuxerModulePromise = null;
+let requestedFileName = "";
 
 function setStatus(message) {
   elements.status.textContent = message;
@@ -147,6 +152,10 @@ function readStory() {
   const duration = readNumber(elements.duration, "移動時間");
   const outputWidth = readPositiveInteger(elements.outputWidth, "出力幅");
   const outputHeight = readPositiveInteger(elements.outputHeight, "出力高さ");
+
+  if (outputWidth % 2 !== 0 || outputHeight % 2 !== 0) {
+    throw new Error("MP4出力幅・高さは偶数で指定してください");
+  }
 
   if (latitude < -90 || latitude > 90) {
     throw new Error("緯度は -90〜90 で指定してください");
@@ -893,23 +902,81 @@ function flyToStory(
   });
 }
 
-function getMp4MimeType() {
+function loadMp4MuxerModule() {
+  if (!mp4MuxerModulePromise) {
+    mp4MuxerModulePromise = import(MP4_MUXER_MODULE_URL);
+  }
+
+  return mp4MuxerModulePromise;
+}
+
+function getTargetVideoBitrate(story) {
+  const bitsPerSecond =
+    story.outputWidth *
+    story.outputHeight *
+    RECORD_FPS *
+    0.16;
+
+  return Math.round(
+    Cesium.Math.clamp(
+      bitsPerSecond,
+      6000000,
+      80000000
+    )
+  );
+}
+
+async function getVideoEncoderConfig(story) {
   if (
-    !window.MediaRecorder ||
-    typeof MediaRecorder.isTypeSupported !== "function" ||
-    typeof HTMLCanvasElement.prototype.captureStream !== "function"
+    typeof window.VideoEncoder === "undefined" ||
+    typeof window.VideoFrame === "undefined"
   ) {
     return null;
   }
 
-  const candidates = [
-    "video/mp4;codecs=avc1.42E01E",
-    "video/mp4;codecs=avc1",
-    "video/mp4;codecs=h264",
-    "video/mp4",
-  ];
+  const bitrate = getTargetVideoBitrate(story);
+  const pixels = story.outputWidth * story.outputHeight;
+  const codecs =
+    pixels > 1920 * 1080
+      ? [
+          "avc1.640033",
+          "avc1.4d0033",
+          "avc1.420033",
+        ]
+      : [
+          "avc1.64002a",
+          "avc1.4d002a",
+          "avc1.42002a",
+          "avc1.42001f",
+        ];
 
-  return candidates.find((type) => MediaRecorder.isTypeSupported(type)) || null;
+  for (const codec of codecs) {
+    const config = {
+      codec,
+      width: story.outputWidth,
+      height: story.outputHeight,
+      bitrate,
+      framerate: RECORD_FPS,
+      latencyMode: "quality",
+      hardwareAcceleration: "prefer-hardware",
+      avc: {
+        format: "avc",
+      },
+    };
+
+    try {
+      const support =
+        await VideoEncoder.isConfigSupported(config);
+
+      if (support.supported) {
+        return support.config;
+      }
+    } catch {
+      // Try the next H.264 profile/level.
+    }
+  }
+
+  return null;
 }
 
 function applyRecordingViewport(outputWidth, outputHeight) {
@@ -1185,42 +1252,64 @@ function downloadBlob(blob, fileName) {
   window.setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
-async function recordFlightAsMp4(story, mimeType) {
+async function recordFlightAsMp4(
+  story,
+  encoderConfig
+) {
+  const { Muxer, ArrayBufferTarget } =
+    await loadMp4MuxerModule();
+
   const outputCanvas = document.createElement("canvas");
   outputCanvas.width = story.outputWidth;
   outputCanvas.height = story.outputHeight;
 
   const context = outputCanvas.getContext("2d", {
     alpha: false,
+    desynchronized: true,
   });
   if (!context) {
     throw new Error("録画用Canvasを作成できませんでした");
   }
 
-  viewer.scene.render();
-  context.drawImage(
-    viewer.canvas,
-    0,
-    0,
-    outputCanvas.width,
-    outputCanvas.height
-  );
-  drawAttribution(context, outputCanvas);
+  const target = new ArrayBufferTarget();
+  const muxer = new Muxer({
+    target,
+    video: {
+      codec: "avc",
+      width: story.outputWidth,
+      height: story.outputHeight,
+      frameRate: RECORD_FPS,
+    },
+    fastStart: "in-memory",
+  });
 
-  const stream = outputCanvas.captureStream(RECORD_FPS);
-  const chunks = [];
-  const recorder = new MediaRecorder(stream, { mimeType });
+  let encoderError = null;
+  const encoder = new VideoEncoder({
+    output: (chunk, metadata) => {
+      muxer.addVideoChunk(chunk, metadata);
+    },
+    error: (error) => {
+      encoderError = error;
+    },
+  });
+  encoder.configure(encoderConfig);
 
+  const frameDurationUs = 1000000 / RECORD_FPS;
   let animationFrameId = null;
   let drawing = true;
+  let captureStartedAt = null;
+  let framesGenerated = 0;
 
-  function drawFrame() {
-    if (!drawing) {
-      return;
-    }
-
+  function drawComposite() {
     context.fillStyle = "#000";
-    context.fillRect(0, 0, outputCanvas.width, outputCanvas.height);
+    context.fillRect(
+      0,
+      0,
+      outputCanvas.width,
+      outputCanvas.height
+    );
+
+    viewer.scene.render();
     context.drawImage(
       viewer.canvas,
       0,
@@ -1242,28 +1331,61 @@ async function recordFlightAsMp4(story, mimeType) {
         outputCanvas.height
       );
     }
-
-    animationFrameId = window.requestAnimationFrame(drawFrame);
   }
 
-  const finished = new Promise((resolve, reject) => {
-    recorder.addEventListener("dataavailable", (event) => {
-      if (event.data && event.data.size > 0) {
-        chunks.push(event.data);
-      }
+  function encodeFrame(frameIndex) {
+    const timestamp = Math.round(
+      frameIndex * frameDurationUs
+    );
+    const nextTimestamp = Math.round(
+      (frameIndex + 1) * frameDurationUs
+    );
+    const frame = new VideoFrame(outputCanvas, {
+      timestamp,
+      duration: nextTimestamp - timestamp,
     });
 
-    recorder.addEventListener("stop", () => {
-      resolve(new Blob(chunks, { type: mimeType }));
+    encoder.encode(frame, {
+      keyFrame:
+        frameIndex % KEYFRAME_INTERVAL_FRAMES === 0,
     });
+    frame.close();
+  }
 
-    recorder.addEventListener("error", (event) => {
-      reject(event.error || new Error("MP4録画に失敗しました"));
-    });
-  });
+  function captureDueFrames(now) {
+    if (captureStartedAt === null) {
+      captureStartedAt = now;
+    }
 
-  drawFrame();
-  recorder.start(250);
+    drawComposite();
+
+    const elapsedMs = Math.max(
+      0,
+      now - captureStartedAt
+    );
+    const targetFrameCount =
+      Math.floor(
+        (elapsedMs * RECORD_FPS) / 1000
+      ) + 1;
+
+    while (framesGenerated < targetFrameCount) {
+      encodeFrame(framesGenerated);
+      framesGenerated += 1;
+    }
+  }
+
+  function captureLoop(now) {
+    if (!drawing) {
+      return;
+    }
+
+    captureDueFrames(now);
+    animationFrameId =
+      window.requestAnimationFrame(captureLoop);
+  }
+
+  animationFrameId =
+    window.requestAnimationFrame(captureLoop);
 
   try {
     await wait(PRE_ROLL_MS);
@@ -1271,14 +1393,41 @@ async function recordFlightAsMp4(story, mimeType) {
     await animatePortalHold(story, ARRIVAL_HOLD_MS);
     await animatePortalDive(story, WORMHOLE_DIVE_MS);
     await wait(WHITEOUT_HOLD_MS);
-    recorder.stop();
-    return await finished;
+
+    captureDueFrames(performance.now());
+    drawing = false;
+
+    if (animationFrameId !== null) {
+      window.cancelAnimationFrame(animationFrameId);
+      animationFrameId = null;
+    }
+
+    await encoder.flush();
+
+    if (encoderError) {
+      throw encoderError;
+    }
+
+    muxer.finalize();
+
+    return new Blob(
+      [target.buffer],
+      { type: "video/mp4" }
+    );
   } finally {
     drawing = false;
+
     if (animationFrameId !== null) {
       window.cancelAnimationFrame(animationFrameId);
     }
-    stream.getTracks().forEach((track) => track.stop());
+
+    if (encoder.state !== "closed") {
+      try {
+        encoder.close();
+      } catch {
+        // Encoder may already be closed after an error.
+      }
+    }
   }
 }
 
@@ -1296,9 +1445,12 @@ async function runStory() {
     return;
   }
 
-  const mimeType = getMp4MimeType();
-  if (!mimeType) {
-    setStatus("このブラウザはCanvasのMP4録画に対応していません");
+  const encoderConfig =
+    await getVideoEncoderConfig(story);
+  if (!encoderConfig) {
+    setStatus(
+      "このブラウザはH.264 WebCodecs録画に対応していません"
+    );
     return;
   }
 
@@ -1319,8 +1471,17 @@ async function runStory() {
     await waitForAnimationFrames(3);
     await wait(350);
 
-    const mp4 = await recordFlightAsMp4(story, mimeType);
-    const fileName = sanitizeFileName(story.name) + ".mp4";
+    const mp4 = await recordFlightAsMp4(
+      story,
+      encoderConfig
+    );
+    const requestedBaseName = requestedFileName
+      .replace(/\.mp4$/i, "")
+      .trim();
+    const fileName =
+      sanitizeFileName(
+        requestedBaseName || story.name
+      ) + ".mp4";
     downloadBlob(mp4, fileName);
 
     setStatus(
@@ -1356,8 +1517,11 @@ function applyQueryParameters() {
     ["height", elements.height],
     ["duration", elements.duration],
     ["width", elements.outputWidth],
+    ["w", elements.outputWidth],
     ["heightPx", elements.outputHeight],
+    ["h", elements.outputHeight],
     ["video", elements.video],
+    ["next", elements.video],
   ];
 
   for (const [key, input] of mappings) {
@@ -1366,7 +1530,14 @@ function applyQueryParameters() {
     }
   }
 
-  return params.get("autoplay") === "1";
+  requestedFileName =
+    params.get("filename")?.trim() || "";
+
+  return (
+    params.get("autoplay") === "1" ||
+    params.get("download") === "1" ||
+    params.get("run") === "1"
+  );
 }
 
 function updateImageryBlend() {
