@@ -363,7 +363,7 @@ function showTravelTrails(story, currentProgress = 0) {
 }
 
 function updateCurrentTrail(path, progress) {
-  if (!currentTrailEntity) {
+  if (!currentTrailEntity || !path.geodesic) {
     return;
   }
 
@@ -1014,11 +1014,21 @@ function getNadirCameraView(story) {
 }
 
 function createFlightPath(story) {
+  const baseHeight = story.height;
+
+  if (!locationsDiffer(story.previous, story.current)) {
+    return {
+      geodesic: null,
+      staticLocation: story.current,
+      baseHeight,
+      peakHeight: baseHeight,
+    };
+  }
+
   const geodesic = createLocationGeodesic(
     story.previous,
     story.current
   );
-  const baseHeight = story.height;
   const peakHeight = Math.min(
     MAX_FLIGHT_PEAK_HEIGHT,
     Math.max(
@@ -1029,6 +1039,7 @@ function createFlightPath(story) {
 
   return {
     geodesic,
+    staticLocation: null,
     baseHeight,
     peakHeight,
   };
@@ -1037,11 +1048,16 @@ function createFlightPath(story) {
 function setCameraFlightProgress(path, progress) {
   const clamped = Cesium.Math.clamp(progress, 0, 1);
   const eased = Cesium.EasingFunction.CUBIC_IN_OUT(clamped);
-  const surface = path.geodesic.interpolateUsingFraction(eased);
-  const arc = Math.pow(
-    Math.sin(Math.PI * eased),
-    0.82
-  );
+  const surface = path.geodesic
+    ? path.geodesic.interpolateUsingFraction(eased)
+    : Cesium.Cartographic.fromDegrees(
+        path.staticLocation.longitude,
+        path.staticLocation.latitude,
+        0
+      );
+  const arc = path.geodesic
+    ? Math.pow(Math.sin(Math.PI * eased), 0.82)
+    : 0;
   const height =
     path.baseHeight +
     (path.peakHeight - path.baseHeight) * arc;
