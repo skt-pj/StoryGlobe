@@ -3,7 +3,7 @@ const SATELLITE_SERVICE_URL =
 const BLUE_MARBLE_URL =
   "https://eoimages.gsfc.nasa.gov/images/imagerecords/57000/57730/land_ocean_ice_8192.png";
 const NESSIE_IMAGE_URL =
-  "./assets/loch-ness-monster.png?v=20260920-2";
+  "./assets/loch-ness-monster.png?v=20260920-3";
 const NESSIE_DESTINATION = Object.freeze({
   name: "ネッシー",
   latitude: 57.2741223,
@@ -201,6 +201,114 @@ function clearDestinationMarker() {
   }
 }
 
+function getNessieOverlayLayout(story) {
+  const outputWidth = story.outputWidth;
+  const outputHeight = story.outputHeight;
+  const outputAspect = outputWidth / outputHeight;
+  const shortSide = Math.min(outputWidth, outputHeight);
+  const margin = Math.round(Math.max(24, shortSide * 0.045));
+  const padding = Math.round(Math.max(10, shortSide * 0.012));
+  const border = Math.round(Math.max(2, shortSide * 0.003));
+
+  const sourceWidth = nessieImageElement?.naturalWidth || 1024;
+  const sourceHeight = nessieImageElement?.naturalHeight || 1536;
+  const sourceAspect = sourceWidth / sourceHeight;
+
+  const landscape = outputAspect >= 1.2;
+  const maxCardWidth = landscape
+    ? outputWidth * 0.28
+    : outputWidth * 0.56;
+  const maxCardHeight = landscape
+    ? outputHeight * 0.58
+    : outputHeight * 0.38;
+
+  const maxImageWidth = Math.max(1, maxCardWidth - padding * 2);
+  const maxImageHeight = Math.max(1, maxCardHeight - padding * 2);
+  const imageWidth = Math.round(
+    Math.min(maxImageWidth, maxImageHeight * sourceAspect)
+  );
+  const imageHeight = Math.round(imageWidth / sourceAspect);
+  const cardWidth = imageWidth + padding * 2;
+  const cardHeight = imageHeight + padding * 2;
+
+  let offsetX = 0;
+  let offsetY = 0;
+
+  if (landscape) {
+    offsetX = Math.round(
+      outputWidth / 2 - margin - cardWidth / 2
+    );
+    offsetY = Math.round(-outputHeight * 0.05);
+  } else {
+    offsetX = 0;
+    offsetY = Math.round(
+      -outputHeight / 2 + margin + cardHeight / 2
+    );
+  }
+
+  const minOffsetX =
+    -outputWidth / 2 + margin + cardWidth / 2;
+  const maxOffsetX =
+    outputWidth / 2 - margin - cardWidth / 2;
+  const minOffsetY =
+    -outputHeight / 2 + margin + cardHeight / 2;
+  const maxOffsetY =
+    outputHeight / 2 - margin - cardHeight / 2;
+
+  offsetX = Math.round(
+    Cesium.Math.clamp(offsetX, minOffsetX, maxOffsetX)
+  );
+  offsetY = Math.round(
+    Cesium.Math.clamp(offsetY, minOffsetY, maxOffsetY)
+  );
+
+  return {
+    cardWidth,
+    cardHeight,
+    imageWidth,
+    imageHeight,
+    padding,
+    border,
+    offsetX,
+    offsetY,
+  };
+}
+
+function createNessieCard(layout) {
+  const canvas = document.createElement("canvas");
+  canvas.width = layout.cardWidth;
+  canvas.height = layout.cardHeight;
+
+  const context = canvas.getContext("2d");
+  if (!context) {
+    return nessieImageElement || NESSIE_IMAGE_URL;
+  }
+
+  context.fillStyle = "rgba(4, 8, 14, 0.94)";
+  context.fillRect(0, 0, canvas.width, canvas.height);
+
+  context.strokeStyle = "rgba(255, 255, 255, 0.92)";
+  context.lineWidth = layout.border;
+  context.strokeRect(
+    layout.border / 2,
+    layout.border / 2,
+    canvas.width - layout.border,
+    canvas.height - layout.border
+  );
+
+  if (nessieImageElement) {
+    context.drawImage(
+      nessieImageElement,
+      layout.padding,
+      layout.padding,
+      layout.imageWidth,
+      layout.imageHeight
+    );
+  }
+
+  return canvas;
+}
+
 function showMarker(story) {
   clearDestinationMarker();
 
@@ -209,19 +317,21 @@ function showMarker(story) {
   const outlineWidth = Math.max(4, Math.round(4 * markerScale));
   const fontSize = Math.round(36 * markerScale);
   const labelOffset = Math.round(58 * markerScale);
-  const imageWidth = Math.round(320 * markerScale);
-  const imageHeight = Math.round(480 * markerScale);
-  const imageOffset = Math.round(-280 * markerScale);
+  const layout = getNessieOverlayLayout(story);
+  const card = createNessieCard(layout);
 
   destinationMarker = viewer.entities.add({
     position: Cesium.Cartesian3.fromDegrees(story.longitude, story.latitude),
     billboard: {
-      image: nessieImageElement || NESSIE_IMAGE_URL,
-      width: imageWidth,
-      height: imageHeight,
+      image: card,
+      width: layout.cardWidth,
+      height: layout.cardHeight,
       horizontalOrigin: Cesium.HorizontalOrigin.CENTER,
-      verticalOrigin: Cesium.VerticalOrigin.BOTTOM,
-      pixelOffset: new Cesium.Cartesian2(0, imageOffset),
+      verticalOrigin: Cesium.VerticalOrigin.CENTER,
+      pixelOffset: new Cesium.Cartesian2(
+        layout.offsetX,
+        layout.offsetY
+      ),
       disableDepthTestDistance: Number.POSITIVE_INFINITY,
     },
     point: {
