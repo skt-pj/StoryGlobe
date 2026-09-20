@@ -206,45 +206,45 @@ function getNessieOverlayLayout(story) {
   const outputHeight = story.outputHeight;
   const outputAspect = outputWidth / outputHeight;
   const shortSide = Math.min(outputWidth, outputHeight);
-  const margin = Math.round(Math.max(24, shortSide * 0.045));
-  const padding = Math.round(Math.max(10, shortSide * 0.012));
-  const border = Math.round(Math.max(2, shortSide * 0.003));
+
+  const margin = Math.max(24, Math.round(shortSide * 0.045));
+  const padding = Math.max(10, Math.round(shortSide * 0.012));
+  const border = Math.max(2, Math.round(shortSide * 0.003));
 
   const sourceWidth = nessieImageElement?.naturalWidth || 1024;
   const sourceHeight = nessieImageElement?.naturalHeight || 1536;
   const sourceAspect = sourceWidth / sourceHeight;
 
   const landscape = outputAspect >= 1.2;
-  const maxCardWidth = landscape
-    ? outputWidth * 0.28
-    : outputWidth * 0.56;
-  const maxCardHeight = landscape
-    ? outputHeight * 0.58
-    : outputHeight * 0.38;
+  const maxCardWidth = Math.max(
+    1,
+    Math.min(
+      outputWidth - margin * 2,
+      outputWidth * (landscape ? 0.28 : 0.56)
+    )
+  );
+  const maxCardHeight = Math.max(
+    1,
+    Math.min(
+      outputHeight - margin * 2,
+      outputHeight * (landscape ? 0.58 : 0.38)
+    )
+  );
 
   const maxImageWidth = Math.max(1, maxCardWidth - padding * 2);
   const maxImageHeight = Math.max(1, maxCardHeight - padding * 2);
-  const imageWidth = Math.round(
-    Math.min(maxImageWidth, maxImageHeight * sourceAspect)
+
+  let imageWidth = Math.min(
+    maxImageWidth,
+    maxImageHeight * sourceAspect
   );
-  const imageHeight = Math.round(imageWidth / sourceAspect);
+  let imageHeight = imageWidth / sourceAspect;
+
+  imageWidth = Math.max(2, Math.floor(imageWidth / 2) * 2);
+  imageHeight = Math.max(2, Math.floor(imageHeight / 2) * 2);
+
   const cardWidth = imageWidth + padding * 2;
   const cardHeight = imageHeight + padding * 2;
-
-  let offsetX = 0;
-  let offsetY = 0;
-
-  if (landscape) {
-    offsetX = Math.round(
-      outputWidth / 2 - margin - cardWidth / 2
-    );
-    offsetY = Math.round(-outputHeight * 0.05);
-  } else {
-    offsetX = 0;
-    offsetY = Math.round(
-      -outputHeight / 2 + margin + cardHeight / 2
-    );
-  }
 
   const minOffsetX =
     -outputWidth / 2 + margin + cardWidth / 2;
@@ -255,12 +255,26 @@ function getNessieOverlayLayout(story) {
   const maxOffsetY =
     outputHeight / 2 - margin - cardHeight / 2;
 
+  let offsetX;
+  let offsetY;
+
+  if (landscape) {
+    offsetX = maxOffsetX;
+    offsetY = -outputHeight * 0.05;
+  } else {
+    offsetX = 0;
+    offsetY = minOffsetY;
+  }
+
   offsetX = Math.round(
     Cesium.Math.clamp(offsetX, minOffsetX, maxOffsetX)
   );
   offsetY = Math.round(
     Cesium.Math.clamp(offsetY, minOffsetY, maxOffsetY)
   );
+
+  const centerX = outputWidth / 2 + offsetX;
+  const centerY = outputHeight / 2 + offsetY;
 
   return {
     cardWidth,
@@ -271,6 +285,11 @@ function getNessieOverlayLayout(story) {
     border,
     offsetX,
     offsetY,
+    left: Math.round(centerX - cardWidth / 2),
+    right: Math.round(centerX + cardWidth / 2),
+    top: Math.round(centerY - cardHeight / 2),
+    bottom: Math.round(centerY + cardHeight / 2),
+    margin,
   };
 }
 
