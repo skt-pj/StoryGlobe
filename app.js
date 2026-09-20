@@ -23,7 +23,7 @@ const DEFAULT_STOPS = Object.freeze({
   }),
 });
 const CURRENT_STORY_IMAGE_URL = DEFAULT_STOPS.current.imageUrl;
-const SETTINGS_COOKIE_NAME = "storyglobeSettings";
+const SETTINGS_COOKIE_NAME = "storyglobeSettingsV2";
 const SETTINGS_COOKIE_MAX_AGE = 60 * 60 * 24 * 365;
 const DEFAULT_FORM_SETTINGS = Object.freeze({
   previousPreviousName: DEFAULT_STOPS.previousPrevious.name,
