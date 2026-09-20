@@ -914,7 +914,7 @@ async function fadeTransitionWhiteout(
 async function openVideo(story) {
   if (!story.videoUrl) {
     clearDestinationMarker();
-    setHomeView(false);
+    setHomeView(false, story);
     await fadeTransitionWhiteout(0, 650);
     return;
   }
@@ -1400,7 +1400,7 @@ async function preloadFlightPath(story) {
       ROUTE_PRELOAD_FINAL_TIMEOUT_MS
     );
 
-    setHomeView(false);
+    setHomeView(false, story);
     updateImageryBlend();
     await waitForAnimationFrames(4);
   } finally {
@@ -1737,6 +1737,15 @@ async function runStory() {
 
 function getFormSettings() {
   return {
+    previousPreviousName:
+      elements.previousPreviousName.value.trim(),
+    previousPreviousLatitude:
+      elements.previousPreviousLat.value,
+    previousPreviousLongitude:
+      elements.previousPreviousLon.value,
+    previousName: elements.previousName.value.trim(),
+    previousLatitude: elements.previousLat.value,
+    previousLongitude: elements.previousLon.value,
     name: elements.name.value.trim(),
     latitude: elements.lat.value,
     longitude: elements.lon.value,
@@ -1755,6 +1764,12 @@ function applyFormSettings(settings) {
   }
 
   const mappings = [
+    ["previousPreviousName", elements.previousPreviousName],
+    ["previousPreviousLatitude", elements.previousPreviousLat],
+    ["previousPreviousLongitude", elements.previousPreviousLon],
+    ["previousName", elements.previousName],
+    ["previousLatitude", elements.previousLat],
+    ["previousLongitude", elements.previousLon],
     ["name", elements.name],
     ["latitude", elements.lat],
     ["longitude", elements.lon],
@@ -1842,6 +1857,18 @@ function applyQueryParameters() {
   const params = new URLSearchParams(window.location.search);
 
   const mappings = [
+    ["prev2Name", elements.previousPreviousName],
+    ["prev2Lat", elements.previousPreviousLat],
+    ["prev2Lon", elements.previousPreviousLon],
+    ["previousPreviousName", elements.previousPreviousName],
+    ["previousPreviousLat", elements.previousPreviousLat],
+    ["previousPreviousLon", elements.previousPreviousLon],
+    ["prevName", elements.previousName],
+    ["prevLat", elements.previousLat],
+    ["prevLon", elements.previousLon],
+    ["previousName", elements.previousName],
+    ["previousLat", elements.previousLat],
+    ["previousLon", elements.previousLon],
     ["name", elements.name],
     ["lat", elements.lat],
     ["latitude", elements.lat],
@@ -1883,6 +1910,12 @@ function applyQueryParameters() {
 
 function installSettingsPersistence() {
   const inputs = [
+    elements.previousPreviousName,
+    elements.previousPreviousLat,
+    elements.previousPreviousLon,
+    elements.previousName,
+    elements.previousLat,
+    elements.previousLon,
     elements.name,
     elements.lat,
     elements.lon,
