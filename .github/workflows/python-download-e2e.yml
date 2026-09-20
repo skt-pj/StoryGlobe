@@ -46,8 +46,8 @@ jobs:
             --lon -123.632 \
             --height 350000 \
             --duration 0.5 \
-            --width 640 \
-            --output-height 360 \
+            --width 320 \
+            --output-height 180 \
             --timeout 900
 
       - name: Verify downloaded MP4
