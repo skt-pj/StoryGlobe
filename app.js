@@ -178,9 +178,49 @@ function readPositiveInteger(input, label) {
   return value;
 }
 
+function readLocation(
+  nameInput,
+  latInput,
+  lonInput,
+  label
+) {
+  const latitude = readNumber(latInput, label + "の緯度");
+  const longitude = readNumber(lonInput, label + "の経度");
+
+  if (latitude < -90 || latitude > 90) {
+    throw new Error(label + "の緯度は -90〜90 で指定してください");
+  }
+  if (longitude < -180 || longitude > 180) {
+    throw new Error(label + "の経度は -180〜180 で指定してください");
+  }
+
+  return {
+    name: nameInput.value.trim() || label,
+    latitude,
+    longitude,
+  };
+}
+
 function readStory() {
-  const latitude = readNumber(elements.lat, "緯度");
-  const longitude = readNumber(elements.lon, "経度");
+  const previousPrevious = readLocation(
+    elements.previousPreviousName,
+    elements.previousPreviousLat,
+    elements.previousPreviousLon,
+    "前々回"
+  );
+  const previous = readLocation(
+    elements.previousName,
+    elements.previousLat,
+    elements.previousLon,
+    "前回"
+  );
+  const current = readLocation(
+    elements.name,
+    elements.lat,
+    elements.lon,
+    "今回"
+  );
+
   const height = readNumber(elements.height, "到着高度");
   const duration = readNumber(elements.duration, "移動時間");
   const outputWidth = readPositiveInteger(elements.outputWidth, "出力幅");
@@ -188,13 +228,6 @@ function readStory() {
 
   if (outputWidth % 2 !== 0 || outputHeight % 2 !== 0) {
     throw new Error("MP4出力幅・高さは偶数で指定してください");
-  }
-
-  if (latitude < -90 || latitude > 90) {
-    throw new Error("緯度は -90〜90 で指定してください");
-  }
-  if (longitude < -180 || longitude > 180) {
-    throw new Error("経度は -180〜180 で指定してください");
   }
   if (height < 1000) {
     throw new Error("到着高度は 1000m 以上で指定してください");
@@ -204,9 +237,12 @@ function readStory() {
   }
 
   return {
-    name: elements.name.value.trim() || "Story location",
-    latitude,
-    longitude,
+    name: current.name,
+    latitude: current.latitude,
+    longitude: current.longitude,
+    previousPrevious,
+    previous,
+    current,
     height,
     duration,
     outputWidth,
@@ -215,23 +251,156 @@ function readStory() {
   };
 }
 
-function setHomeView(animated = true) {
+function locationsDiffer(a, b) {
+  return (
+    Math.abs(a.latitude - b.latitude) > 1e-8 ||
+    Math.abs(a.longitude - b.longitude) > 1e-8
+  );
+}
+
+function createLocationGeodesic(from, to) {
+  return new Cesium.EllipsoidGeodesic(
+    Cesium.Cartographic.fromDegrees(
+      from.longitude,
+      from.latitude,
+      0
+    ),
+    Cesium.Cartographic.fromDegrees(
+      to.longitude,
+      to.latitude,
+      0
+    ),
+    Cesium.Ellipsoid.WGS84
+  );
+}
+
+function buildTrailPositions(geodesic, progress = 1) {
+  const clamped = Cesium.Math.clamp(progress, 0, 1);
+  const sampleCount = Math.max(
+    2,
+    Math.ceil(TRAIL_SAMPLE_COUNT * clamped) + 1
+  );
+  const positions = [];
+
+  for (let index = 0; index < sampleCount; index += 1) {
+    const localProgress =
+      sampleCount <= 1 ? 0 : index / (sampleCount - 1);
+    const fraction = clamped * localProgress;
+    const point = geodesic.interpolateUsingFraction(fraction);
+
+    positions.push(
+      Cesium.Cartesian3.fromRadians(
+        point.longitude,
+        point.latitude,
+        TRAIL_HEIGHT_METERS
+      )
+    );
+  }
+
+  return positions;
+}
+
+function clearTravelTrails() {
+  if (historicalTrailEntity) {
+    viewer.entities.remove(historicalTrailEntity);
+    historicalTrailEntity = null;
+  }
+  if (currentTrailEntity) {
+    viewer.entities.remove(currentTrailEntity);
+    currentTrailEntity = null;
+  }
+}
+
+function createTrailEntity(positions, isCurrent) {
+  return viewer.entities.add({
+    polyline: {
+      positions,
+      width: isCurrent ? 7 : 5,
+      arcType: Cesium.ArcType.NONE,
+      material: new Cesium.PolylineGlowMaterialProperty({
+        glowPower: isCurrent ? 0.28 : 0.16,
+        taperPower: isCurrent ? 0.8 : 0.45,
+        color: isCurrent
+          ? Cesium.Color.fromCssColorString("#baf3ff").withAlpha(0.96)
+          : Cesium.Color.fromCssColorString("#77d8ee").withAlpha(0.58),
+      }),
+    },
+  });
+}
+
+function showTravelTrails(story, currentProgress = 0) {
+  clearTravelTrails();
+
+  if (
+    locationsDiffer(
+      story.previousPrevious,
+      story.previous
+    )
+  ) {
+    const historyGeodesic = createLocationGeodesic(
+      story.previousPrevious,
+      story.previous
+    );
+    historicalTrailEntity = createTrailEntity(
+      buildTrailPositions(historyGeodesic, 1),
+      false
+    );
+  }
+
+  if (locationsDiffer(story.previous, story.current)) {
+    const currentGeodesic = createLocationGeodesic(
+      story.previous,
+      story.current
+    );
+    currentTrailEntity = createTrailEntity(
+      buildTrailPositions(
+        currentGeodesic,
+        currentProgress
+      ),
+      true
+    );
+  }
+}
+
+function updateCurrentTrail(path, progress) {
+  if (!currentTrailEntity) {
+    return;
+  }
+
+  currentTrailEntity.polyline.positions =
+    buildTrailPositions(path.geodesic, progress);
+}
+
+function setHomeView(animated = true, story = null) {
   if (!viewer) {
     return;
   }
 
+  let activeStory = story;
+  if (!activeStory) {
+    try {
+      activeStory = readStory();
+    } catch (error) {
+      setStatus(error.message);
+      return;
+    }
+  }
+
+  clearDestinationMarker();
+  showTravelTrails(activeStory, 0);
+
+  const view = getLocationCameraView(
+    activeStory.previous,
+    activeStory.height
+  );
+
   const options = {
-    destination: Cesium.Cartesian3.fromDegrees(
-      FLIGHT_START_LONGITUDE,
-      FLIGHT_START_LATITUDE,
-      FLIGHT_START_HEIGHT
-    ),
+    destination: view.destination,
     orientation: {
-      heading: Cesium.Math.toRadians(0),
-      pitch: Cesium.Math.toRadians(-90),
-      roll: 0,
+      direction: view.direction,
+      up: view.up,
     },
-    duration: animated ? 2.2 : 0,
+    duration: animated ? 1.6 : 0,
     easingFunction: Cesium.EasingFunction.CUBIC_IN_OUT,
   };
 
@@ -241,7 +410,9 @@ function setHomeView(animated = true) {
     viewer.camera.setView(options);
   }
 
-  setStatus("地球全景");
+  updateImageryBlend();
+  viewer.scene.requestRender();
+  setStatus("前回位置: " + activeStory.previous.name);
 }
 
 function setTransitionWhiteout(alpha) {
