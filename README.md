@@ -14,11 +14,11 @@ python -m http.server 8000
 
 ## 使い方
 
-1. 地点名、緯度、経度、到着高度、移動時間を入力します。
-2. 出力するMP4の幅・高さをピクセル単位で入力します。
-3. 「開始してMP4出力」を押します。
-4. 開始後は操作UIが非表示になります。
-5. 地球全景から指定地点まで移動し、終了後にMP4を保存します。
+1. 前々回・前回・今回の3地点について地点名、緯度、経度を入力します。
+2. 初期カメラは前回地点に置かれ、前々回→前回の軌跡が表示されます。
+3. 到着高度、移動時間、出力するMP4の幅・高さを入力します。
+4. 「開始してMP4出力」を押すと、前回→今回へ移動しながら新しい軌跡が伸びます。
+5. 今回地点への到着後は既存のワームホール演出を行い、MP4を保存します。
 
 動画URLを指定している場合は、MP4出力後に従来どおり動画表示へ遷移します。
 
@@ -50,20 +50,22 @@ H.264 WebCodecsに対応していないブラウザでは開始前に非対応�
 通常起動で値だけ指定する例:
 
 ```text
-?name=ネッシー&lat=57.2741223&lon=-4.4849684&w=1920&h=1080&duration=5
+?prev2Name=前々回&prev2Lat=35.681236&prev2Lon=139.767125&prevName=前回&prevLat=51.5074&prevLon=-0.1278&name=ネッシー&lat=57.2741223&lon=-4.4849684&w=1920&h=1080&duration=5
 ```
 
 自動生成・自動ダウンロード:
 
 ```text
-?name=ネッシー&lat=57.2741223&lon=-4.4849684&w=1920&h=1080&duration=5&auto=1&filename=nessie
+?prev2Name=前々回&prev2Lat=35.681236&prev2Lon=139.767125&prevName=前回&prevLat=51.5074&prevLon=-0.1278&name=ネッシー&lat=57.2741223&lon=-4.4849684&w=1920&h=1080&duration=5&auto=1&filename=nessie
 ```
 
 対応項目:
 
-- `name`: 地点名
-- `lat` / `latitude`: 緯度
-- `lon` / `lng` / `longitude`: 経度
+- `prev2Name` / `prev2Lat` / `prev2Lon`: 前々回地点
+- `prevName` / `prevLat` / `prevLon`: 前回地点（初期カメラ位置）
+- `name`: 今回地点名
+- `lat` / `latitude`: 今回緯度
+- `lon` / `lng` / `longitude`: 今回経度
 - `height`: 到着高度(m)
 - `duration`: フライト時間(秒)
 - `width` / `w`: MP4出力幅(px)
@@ -88,6 +90,12 @@ CLI:
 
 ```bash
 python scripts/download_storyglobe.py output/nessie.mp4 \
+  --prev2-name 前々回 \
+  --prev2-lat 35.681236 \
+  --prev2-lon 139.767125 \
+  --prev-name 前回 \
+  --prev-lat 51.5074 \
+  --prev-lon -0.1278 \
   --name ネッシー \
   --lat 57.2741223 \
   --lon -4.4849684 \
@@ -104,6 +112,12 @@ from scripts.download_storyglobe import download_storyglobe
 
 path = download_storyglobe(
     "output/nessie.mp4",
+    prev2_name="前々回",
+    prev2_lat=35.681236,
+    prev2_lon=139.767125,
+    prev_name="前回",
+    prev_lat=51.5074,
+    prev_lon=-0.1278,
     name="ネッシー",
     lat=57.2741223,
     lon=-4.4849684,
