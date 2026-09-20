@@ -6,7 +6,7 @@
   <title>StoryGlobe</title>
   <meta name="description" content="Fly from a satellite globe to a story location and export the flight as MP4.">
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/cesium@1.145/Build/Cesium/Widgets/widgets.css">
-  <link rel="stylesheet" href="./styles.css?v=20260920-5">
+  <link rel="stylesheet" href="./styles.css?v=20260920-8">
   <script>
     window.CESIUM_BASE_URL = "https://cdn.jsdelivr.net/npm/cesium@1.145/Build/Cesium/";
   </script>
@@ -21,24 +21,62 @@
         <p class="eyebrow">WORLD TO STORY</p>
         <h1>StoryGlobe</h1>
       </div>
-      <button id="homeButton" class="secondary" type="button">地球全景</button>
+      <button id="homeButton" class="secondary" type="button">前回位置</button>
     </header>
 
     <section class="panel" aria-label="Story destination controls">
-      <label>
-        <span>地点名</span>
-        <input id="nameInput" type="text" value="ネッシー" autocomplete="off">
-      </label>
+      <div class="location-group">
+        <p class="location-group__title">前々回</p>
+        <label>
+          <span>地点名</span>
+          <input id="previousPreviousNameInput" type="text" value="ネッシー" autocomplete="off">
+        </label>
+        <div class="grid-two">
+          <label>
+            <span>緯度</span>
+            <input id="previousPreviousLatInput" type="number" step="0.000001" min="-90" max="90" value="57.2741223">
+          </label>
+          <label>
+            <span>経度</span>
+            <input id="previousPreviousLonInput" type="number" step="0.000001" min="-180" max="180" value="-4.4849684">
+          </label>
+        </div>
+      </div>
 
-      <div class="grid-two">
+      <div class="location-group">
+        <p class="location-group__title">前回（開始地点）</p>
         <label>
-          <span>緯度</span>
-          <input id="latInput" type="number" step="0.000001" min="-90" max="90" value="57.2741223">
+          <span>地点名</span>
+          <input id="previousNameInput" type="text" value="ネッシー" autocomplete="off">
         </label>
+        <div class="grid-two">
+          <label>
+            <span>緯度</span>
+            <input id="previousLatInput" type="number" step="0.000001" min="-90" max="90" value="57.2741223">
+          </label>
+          <label>
+            <span>経度</span>
+            <input id="previousLonInput" type="number" step="0.000001" min="-180" max="180" value="-4.4849684">
+          </label>
+        </div>
+      </div>
+
+      <div class="location-group location-group--current">
+        <p class="location-group__title">今回（遷移先）</p>
         <label>
-          <span>経度</span>
-          <input id="lonInput" type="number" step="0.000001" min="-180" max="180" value="-4.4849684">
+          <span>地点名</span>
+          <input id="nameInput" type="text" value="ネッシー" autocomplete="off">
         </label>
+        <div class="grid-two">
+          <label>
+            <span>緯度</span>
+            <input id="latInput" type="number" step="0.000001" min="-90" max="90" value="57.2741223">
+          </label>
+          <label>
+            <span>経度</span>
+            <input id="lonInput" type="number" step="0.000001" min="-180" max="180" value="-4.4849684">
+          </label>
+        </div>
       </div>
 
       <div class="grid-two">
@@ -97,6 +135,6 @@
     </section>
   </main>
 
-  <script src="./app.js?v=20260920-7"></script>
+  <script src="./app.js?v=20260920-8"></script>
 </body>
 </html>
