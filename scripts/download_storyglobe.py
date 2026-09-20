@@ -20,6 +20,18 @@ DEFAULT_BASE_URL = "https://skt-pj.github.io/StoryGlobe/"
 def build_storyglobe_url(
     *,
     base_url: str = DEFAULT_BASE_URL,
+    prev2_name: str | None = None,
+    prev2_lat: float | None = None,
+    prev2_lon: float | None = None,
+    prev_name: str | None = None,
+    prev_lat: float | None = None,
+    prev_lon: float | None = None,
+    prev2_name: str | None = None,
+    prev2_lat: float | None = None,
+    prev2_lon: float | None = None,
+    prev_name: str | None = None,
+    prev_lat: float | None = None,
+    prev_lon: float | None = None,
     name: str | None = None,
     lat: float | None = None,
     lon: float | None = None,
@@ -33,6 +45,18 @@ def build_storyglobe_url(
 ) -> str:
     params: dict[str, str] = {}
 
+    if prev2_name is not None:
+        params["prev2Name"] = prev2_name
+    if prev2_lat is not None:
+        params["prev2Lat"] = str(prev2_lat)
+    if prev2_lon is not None:
+        params["prev2Lon"] = str(prev2_lon)
+    if prev_name is not None:
+        params["prevName"] = prev_name
+    if prev_lat is not None:
+        params["prevLat"] = str(prev_lat)
+    if prev_lon is not None:
+        params["prevLon"] = str(prev_lon)
     if name is not None:
         params["name"] = name
     if lat is not None:
@@ -110,7 +134,7 @@ def download_storyglobe(
         from playwright.sync_api import sync_playwright
     except ImportError as error:
         raise RuntimeError(
-            "Playwrightが必要です: pip install playwright && playwright install chrome"
+            "Playwrightが必要です: pip install playwright && playwright install chromium"
         ) from error
 
     destination = Path(output_path).expanduser().resolve()
@@ -118,6 +142,12 @@ def download_storyglobe(
 
     url = build_storyglobe_url(
         base_url=base_url,
+        prev2_name=prev2_name,
+        prev2_lat=prev2_lat,
+        prev2_lon=prev2_lon,
+        prev_name=prev_name,
+        prev_lat=prev_lat,
+        prev_lon=prev_lon,
         name=name,
         lat=lat,
         lon=lon,
@@ -166,6 +196,12 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("output", help="保存先MP4パス")
     parser.add_argument("--base-url", default=DEFAULT_BASE_URL)
+    parser.add_argument("--prev2-name")
+    parser.add_argument("--prev2-lat", type=float)
+    parser.add_argument("--prev2-lon", type=float)
+    parser.add_argument("--prev-name")
+    parser.add_argument("--prev-lat", type=float)
+    parser.add_argument("--prev-lon", type=float)
     parser.add_argument("--name")
     parser.add_argument("--lat", type=float)
     parser.add_argument("--lon", type=float)
@@ -186,6 +222,12 @@ def main() -> None:
     path = download_storyglobe(
         args.output,
         base_url=args.base_url,
+        prev2_name=args.prev2_name,
+        prev2_lat=args.prev2_lat,
+        prev2_lon=args.prev2_lon,
+        prev_name=args.prev_name,
+        prev_lat=args.prev_lat,
+        prev_lon=args.prev_lon,
         name=args.name,
         lat=args.lat,
         lon=args.lon,
