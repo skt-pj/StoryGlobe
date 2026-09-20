@@ -700,6 +700,8 @@ async function fadeTransitionWhiteout(
 
 async function openVideo(story) {
   if (!story.videoUrl) {
+    clearDestinationMarker();
+    setHomeView(false);
     await fadeTransitionWhiteout(0, 650);
     return;
   }
@@ -736,6 +738,7 @@ function closeVideo() {
   elements.storyVideo.load();
   elements.overlay.classList.remove("visible");
   elements.overlay.setAttribute("aria-hidden", "true");
+  clearDestinationMarker();
   setTransitionWhiteout(0);
 }
 
