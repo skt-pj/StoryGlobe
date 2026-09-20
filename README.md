@@ -81,7 +81,7 @@ GitHub Pagesは静的サイトなので、HTTPリクエストだけではCesium/
 
 ```bash
 pip install playwright
-playwright install chrome
+playwright install chromium
 ```
 
 CLI:
