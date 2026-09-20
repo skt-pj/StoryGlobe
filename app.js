@@ -9,6 +9,19 @@ const NESSIE_DESTINATION = Object.freeze({
   latitude: 57.2741223,
   longitude: -4.4849684,
 });
+const SETTINGS_COOKIE_NAME = "storyglobeSettings";
+const SETTINGS_COOKIE_MAX_AGE = 60 * 60 * 24 * 365;
+const DEFAULT_FORM_SETTINGS = Object.freeze({
+  name: NESSIE_DESTINATION.name,
+  latitude: NESSIE_DESTINATION.latitude,
+  longitude: NESSIE_DESTINATION.longitude,
+  height: 350000,
+  duration: 5,
+  outputWidth: 1920,
+  outputHeight: 1080,
+  videoUrl: "",
+  filename: "",
+});
 
 const RECORD_FPS = 30;
 const KEYFRAME_INTERVAL_FRAMES = RECORD_FPS;
@@ -146,8 +159,8 @@ function readPositiveInteger(input, label) {
 }
 
 function readStory() {
-  const latitude = NESSIE_DESTINATION.latitude;
-  const longitude = NESSIE_DESTINATION.longitude;
+  const latitude = readNumber(elements.lat, "緯度");
+  const longitude = readNumber(elements.lon, "経度");
   const height = readNumber(elements.height, "到着高度");
   const duration = readNumber(elements.duration, "移動時間");
   const outputWidth = readPositiveInteger(elements.outputWidth, "出力幅");
@@ -171,9 +184,9 @@ function readStory() {
   }
 
   return {
-    name: NESSIE_DESTINATION.name,
-    latitude: NESSIE_DESTINATION.latitude,
-    longitude: NESSIE_DESTINATION.longitude,
+    name: elements.name.value.trim() || "Story location",
+    latitude,
+    longitude,
     height,
     duration,
     outputWidth,
@@ -1444,6 +1457,7 @@ async function recordFlightAsMp4(
 async function runStory() {
   let story;
   try {
+    saveSettingsCookie();
     story = readStory();
   } catch (error) {
     setStatus(error.message);
@@ -1514,16 +1528,119 @@ async function runStory() {
   await openVideo(story);
 }
 
-function applyNessieDestinationToForm() {
-  elements.name.value = NESSIE_DESTINATION.name;
-  elements.lat.value = String(NESSIE_DESTINATION.latitude);
-  elements.lon.value = String(NESSIE_DESTINATION.longitude);
+function getFormSettings() {
+  return {
+    name: elements.name.value.trim(),
+    latitude: elements.lat.value,
+    longitude: elements.lon.value,
+    height: elements.height.value,
+    duration: elements.duration.value,
+    outputWidth: elements.outputWidth.value,
+    outputHeight: elements.outputHeight.value,
+    videoUrl: elements.video.value.trim(),
+    filename: requestedFileName,
+  };
+}
+
+function applyFormSettings(settings) {
+  if (!settings || typeof settings !== "object") {
+    return;
+  }
+
+  const mappings = [
+    ["name", elements.name],
+    ["latitude", elements.lat],
+    ["longitude", elements.lon],
+    ["height", elements.height],
+    ["duration", elements.duration],
+    ["outputWidth", elements.outputWidth],
+    ["outputHeight", elements.outputHeight],
+    ["videoUrl", elements.video],
+  ];
+
+  for (const [key, input] of mappings) {
+    const value = settings[key];
+    if (value !== undefined && value !== null) {
+      input.value = String(value);
+    }
+  }
+
+  if (
+    settings.filename !== undefined &&
+    settings.filename !== null
+  ) {
+    requestedFileName = String(settings.filename);
+  }
+}
+
+function readSettingsCookie() {
+  const prefix = SETTINGS_COOKIE_NAME + "=";
+  const cookie = document.cookie
+    .split(";")
+    .map((value) => value.trim())
+    .find((value) => value.startsWith(prefix));
+
+  if (!cookie) {
+    return null;
+  }
+
+  try {
+    return JSON.parse(
+      decodeURIComponent(cookie.slice(prefix.length))
+    );
+  } catch {
+    return null;
+  }
+}
+
+function saveSettingsCookie() {
+  const encoded = encodeURIComponent(
+    JSON.stringify(getFormSettings())
+  );
+
+  document.cookie =
+    SETTINGS_COOKIE_NAME +
+    "=" +
+    encoded +
+    "; Max-Age=" +
+    SETTINGS_COOKIE_MAX_AGE +
+    "; Path=/; SameSite=Lax";
+}
+
+function restoreInitialSettings() {
+  applyFormSettings(DEFAULT_FORM_SETTINGS);
+
+  const stored = readSettingsCookie();
+  if (stored) {
+    applyFormSettings(stored);
+  }
+}
+
+function isEnabledParameter(params, key) {
+  if (!params.has(key)) {
+    return false;
+  }
+
+  const value = (params.get(key) || "").trim().toLowerCase();
+  return (
+    value === "" ||
+    value === "1" ||
+    value === "true" ||
+    value === "yes" ||
+    value === "on"
+  );
 }
 
 function applyQueryParameters() {
   const params = new URLSearchParams(window.location.search);
 
   const mappings = [
+    ["name", elements.name],
+    ["lat", elements.lat],
+    ["latitude", elements.lat],
+    ["lon", elements.lon],
+    ["lng", elements.lon],
+    ["longitude", elements.lon],
     ["height", elements.height],
     ["duration", elements.duration],
     ["width", elements.outputWidth],
@@ -1540,14 +1657,38 @@ function applyQueryParameters() {
     }
   }
 
-  requestedFileName =
-    params.get("filename")?.trim() || "";
+  if (params.has("filename")) {
+    requestedFileName =
+      params.get("filename")?.trim() || "";
+  }
 
-  return (
-    params.get("autoplay") === "1" ||
-    params.get("download") === "1" ||
-    params.get("run") === "1"
-  );
+  const autoStart =
+    isEnabledParameter(params, "auto") ||
+    isEnabledParameter(params, "autoplay") ||
+    isEnabledParameter(params, "download") ||
+    isEnabledParameter(params, "run");
+
+  return {
+    autoStart,
+    hasParameters: Array.from(params.keys()).length > 0,
+  };
+}
+
+function installSettingsPersistence() {
+  const inputs = [
+    elements.name,
+    elements.lat,
+    elements.lon,
+    elements.height,
+    elements.duration,
+    elements.outputWidth,
+    elements.outputHeight,
+    elements.video,
+  ];
+
+  for (const input of inputs) {
+    input.addEventListener("change", saveSettingsCookie);
+  }
 }
 
 function updateImageryBlend() {
@@ -1618,6 +1759,11 @@ async function initialize() {
     return;
   }
 
+  restoreInitialSettings();
+  const launchOptions = applyQueryParameters();
+  saveSettingsCookie();
+  installSettingsPersistence();
+
   viewer = new Cesium.Viewer("cesiumContainer", {
     animation: false,
     timeline: false,
@@ -1681,8 +1827,6 @@ async function initialize() {
     setStatus("衛星写真の読み込みに失敗しました");
   }
 
-  const autoplay = applyQueryParameters();
-  applyNessieDestinationToForm();
   await preloadNessieImage();
 
   elements.play.addEventListener("click", runStory);
@@ -1692,7 +1836,7 @@ async function initialize() {
   });
   elements.closeVideo.addEventListener("click", closeVideo);
 
-  if (autoplay) {
+  if (launchOptions.autoStart) {
     window.setTimeout(runStory, 500);
   }
 }
