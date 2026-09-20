@@ -3,7 +3,7 @@ const SATELLITE_SERVICE_URL =
 const BLUE_MARBLE_URL =
   "https://eoimages.gsfc.nasa.gov/images/imagerecords/57000/57730/land_ocean_ice_8192.png";
 const NESSIE_IMAGE_URL =
-  "./assets/loch-ness-monster.png?v=20260920-2";
+  "./assets/loch-ness-monster.png?v=20260920-3";
 const NESSIE_DESTINATION = Object.freeze({
   name: "ネッシー",
   latitude: 57.2741223,
@@ -201,6 +201,104 @@ function clearDestinationMarker() {
   }
 }
 
+function createFramedNessieImage() {
+  if (!nessieImageElement) {
+    return NESSIE_IMAGE_URL;
+  }
+
+  const sourceWidth = nessieImageElement.naturalWidth || 1024;
+  const sourceHeight = nessieImageElement.naturalHeight || 1536;
+  const border = Math.max(12, Math.round(sourceWidth * 0.018));
+  const padding = Math.max(18, Math.round(sourceWidth * 0.026));
+  const canvas = document.createElement("canvas");
+
+  canvas.width = sourceWidth + (border + padding) * 2;
+  canvas.height = sourceHeight + (border + padding) * 2;
+
+  const context = canvas.getContext("2d");
+  if (!context) {
+    return nessieImageElement;
+  }
+
+  context.fillStyle = "rgba(0, 0, 0, 0.88)";
+  context.fillRect(0, 0, canvas.width, canvas.height);
+
+  context.fillStyle = "#ffffff";
+  context.fillRect(
+    border,
+    border,
+    canvas.width - border * 2,
+    canvas.height - border * 2
+  );
+
+  context.drawImage(
+    nessieImageElement,
+    border + padding,
+    border + padding,
+    sourceWidth,
+    sourceHeight
+  );
+
+  return canvas;
+}
+
+function calculateDestinationImageLayout(story) {
+  const outputWidth = story.outputWidth;
+  const outputHeight = story.outputHeight;
+  const aspectRatio = outputWidth / outputHeight;
+  const safeMargin = Math.max(
+    24,
+    Math.round(Math.min(outputWidth, outputHeight) * 0.04)
+  );
+
+  const sourceWidth = nessieImageElement?.naturalWidth || 1024;
+  const sourceHeight = nessieImageElement?.naturalHeight || 1536;
+  const sourceAspect = sourceWidth / sourceHeight;
+
+  const landscape = aspectRatio >= 1;
+  const maxWidth = landscape
+    ? outputWidth * 0.30
+    : outputWidth * 0.62;
+  const maxHeight = landscape
+    ? outputHeight * 0.52
+    : outputHeight * 0.44;
+
+  let height = maxHeight;
+  let width = height * sourceAspect;
+
+  if (width > maxWidth) {
+    width = maxWidth;
+    height = width / sourceAspect;
+  }
+
+  width = Math.round(width);
+  height = Math.round(height);
+
+  const minCenterY = safeMargin + height / 2;
+  const maxCenterY = outputHeight - safeMargin - height / 2;
+  const preferredCenterY = outputHeight * (landscape ? 0.40 : 0.36);
+  const centerY = Cesium.Math.clamp(
+    preferredCenterY,
+    minCenterY,
+    maxCenterY
+  );
+
+  const offsetY = Math.round(centerY - outputHeight / 2);
+  const labelGap = Math.max(26, Math.round(outputHeight * 0.035));
+  const labelOffsetY = Math.round(
+    offsetY + height / 2 + labelGap
+  );
+
+  return {
+    width,
+    height,
+    offsetX: 0,
+    offsetY,
+    labelOffsetY,
+    safeMargin,
+  };
+}
+
 function showMarker(story) {
   clearDestinationMarker();
 
@@ -208,20 +306,20 @@ function showMarker(story) {
   const pointSize = Math.round(20 * markerScale);
   const outlineWidth = Math.max(4, Math.round(4 * markerScale));
   const fontSize = Math.round(36 * markerScale);
-  const labelOffset = Math.round(58 * markerScale);
-  const imageWidth = Math.round(320 * markerScale);
-  const imageHeight = Math.round(480 * markerScale);
-  const imageOffset = Math.round(-280 * markerScale);
+  const layout = calculateDestinationImageLayout(story);
 
   destinationMarker = viewer.entities.add({
     position: Cesium.Cartesian3.fromDegrees(story.longitude, story.latitude),
     billboard: {
-      image: nessieImageElement || NESSIE_IMAGE_URL,
-      width: imageWidth,
-      height: imageHeight,
+      image: createFramedNessieImage(),
+      width: layout.width,
+      height: layout.height,
       horizontalOrigin: Cesium.HorizontalOrigin.CENTER,
-      verticalOrigin: Cesium.VerticalOrigin.BOTTOM,
-      pixelOffset: new Cesium.Cartesian2(0, imageOffset),
+      verticalOrigin: Cesium.VerticalOrigin.CENTER,
+      pixelOffset: new Cesium.Cartesian2(
+        layout.offsetX,
+        layout.offsetY
+      ),
       disableDepthTestDistance: Number.POSITIVE_INFINITY,
     },
     point: {
@@ -238,7 +336,10 @@ function showMarker(story) {
       outlineColor: Cesium.Color.BLACK,
       outlineWidth: Math.max(5, Math.round(5 * markerScale)),
       style: Cesium.LabelStyle.FILL_AND_OUTLINE,
-      pixelOffset: new Cesium.Cartesian2(0, labelOffset),
+      pixelOffset: new Cesium.Cartesian2(
+        0,
+        layout.labelOffsetY
+      ),
       disableDepthTestDistance: Number.POSITIVE_INFINITY,
     },
   });
