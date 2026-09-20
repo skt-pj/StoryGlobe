@@ -955,10 +955,10 @@ function closeVideo() {
   setTransitionWhiteout(0);
 }
 
-function getNadirCameraView(story) {
+function getLocationCameraView(location, height) {
   const target = Cesium.Cartesian3.fromDegrees(
-    story.longitude,
-    story.latitude,
+    location.longitude,
+    location.latitude,
     0
   );
   const normal = Cesium.Ellipsoid.WGS84.geodeticSurfaceNormal(
@@ -967,7 +967,7 @@ function getNadirCameraView(story) {
   );
   const offset = Cesium.Cartesian3.multiplyByScalar(
     normal,
-    story.height,
+    height,
     new Cesium.Cartesian3()
   );
   const destination = Cesium.Cartesian3.add(
@@ -1006,26 +1006,31 @@ function getNadirCameraView(story) {
   };
 }
 
-function createFlightPath(story) {
-  const start = Cesium.Cartographic.fromDegrees(
-    FLIGHT_START_LONGITUDE,
-    FLIGHT_START_LATITUDE,
-    0
+function getNadirCameraView(story) {
+  return getLocationCameraView(
+    story.current,
+    story.height
   );
-  const end = Cesium.Cartographic.fromDegrees(
-    story.longitude,
-    story.latitude,
-    0
+}
+
+function createFlightPath(story) {
+  const geodesic = createLocationGeodesic(
+    story.previous,
+    story.current
+  );
+  const baseHeight = story.height;
+  const peakHeight = Math.min(
+    MAX_FLIGHT_PEAK_HEIGHT,
+    Math.max(
+      baseHeight,
+      baseHeight + geodesic.surfaceDistance * 0.28
+    )
   );
 
   return {
-    geodesic: new Cesium.EllipsoidGeodesic(
-      start,
-      end,
-      Cesium.Ellipsoid.WGS84
-    ),
-    startHeightLog: Math.log(FLIGHT_START_HEIGHT),
-    endHeightLog: Math.log(story.height),
+    geodesic,
+    baseHeight,
+    peakHeight,
   };
 }
 
@@ -1033,10 +1038,13 @@ function setCameraFlightProgress(path, progress) {
   const clamped = Cesium.Math.clamp(progress, 0, 1);
   const eased = Cesium.EasingFunction.CUBIC_IN_OUT(clamped);
   const surface = path.geodesic.interpolateUsingFraction(eased);
-  const height = Math.exp(
-    path.startHeightLog +
-      (path.endHeightLog - path.startHeightLog) * eased
+  const arc = Math.pow(
+    Math.sin(Math.PI * eased),
+    0.82
   );
+  const height =
+    path.baseHeight +
+    (path.peakHeight - path.baseHeight) * arc;
 
   viewer.camera.setView({
     destination: Cesium.Cartesian3.fromRadians(
@@ -1053,6 +1061,7 @@ function setCameraFlightProgress(path, progress) {
 
   updateImageryBlend();
   viewer.scene.requestRender();
+  return eased;
 }
 
 function flyToStory(
@@ -1065,6 +1074,8 @@ function flyToStory(
   const path = createFlightPath(story);
   const durationMs = Math.max(1, duration * 1000);
 
+  showTravelTrails(story, 0);
+
   return new Promise((resolve) => {
     const startedAt = performance.now();
 
@@ -1075,7 +1086,11 @@ function flyToStory(
         1
       );
 
-      setCameraFlightProgress(path, progress);
+      const eased = setCameraFlightProgress(
+        path,
+        progress
+      );
+      updateCurrentTrail(path, eased);
 
       if (progress < 1) {
         window.requestAnimationFrame(frame);
@@ -1090,6 +1105,7 @@ function flyToStory(
           up: view.up,
         },
       });
+      updateCurrentTrail(path, 1);
 
       if (showMarkerAtEnd) {
         showMarker(story);
