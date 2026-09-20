@@ -2,10 +2,11 @@ const SATELLITE_SERVICE_URL =
   "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer";
 const BLUE_MARBLE_URL =
   "https://eoimages.gsfc.nasa.gov/images/imagerecords/57000/57730/land_ocean_ice_8192.png";
+const NESSIE_IMAGE_URL = "./assets/loch-ness-monster.png";
 
 const RECORD_FPS = 30;
 const PRE_ROLL_MS = 500;
-const POST_ROLL_MS = 500;
+const POST_ROLL_MS = 2500;
 const ROUTE_PRELOAD_SAMPLES_PER_SECOND = 18;
 const ROUTE_PRELOAD_MIN_SAMPLES = 72;
 const ROUTE_PRELOAD_MAX_SAMPLES = 180;
@@ -47,6 +48,7 @@ let globalImageryLayer;
 let detailImageryLayer;
 let satelliteReady = false;
 let recordingViewportState = null;
+let nessieImageReady = false;
 
 function setStatus(message) {
   elements.status.textContent = message;
@@ -54,6 +56,27 @@ function setStatus(message) {
 
 function wait(milliseconds) {
   return new Promise((resolve) => window.setTimeout(resolve, milliseconds));
+}
+
+function preloadNessieImage() {
+  if (nessieImageReady) {
+    return Promise.resolve();
+  }
+
+  return new Promise((resolve, reject) => {
+    const image = new Image();
+
+    image.addEventListener("load", () => {
+      nessieImageReady = true;
+      resolve();
+    }, { once: true });
+
+    image.addEventListener("error", () => {
+      reject(new Error("ネッシー画像を読み込めませんでした"));
+    }, { once: true });
+
+    image.src = NESSIE_IMAGE_URL;
+  });
 }
 
 function waitForAnimationFrames(count = 2) {
@@ -161,10 +184,20 @@ function showMarker(story) {
   const pointSize = Math.round(20 * markerScale);
   const outlineWidth = Math.max(4, Math.round(4 * markerScale));
   const fontSize = Math.round(36 * markerScale);
-  const labelOffset = Math.round(-52 * markerScale);
+  const labelOffset = Math.round(58 * markerScale);
+  const imageWidth = Math.round(320 * markerScale);
+  const imageHeight = Math.round(480 * markerScale);
+  const imageOffset = Math.round(-280 * markerScale);
 
   destinationMarker = viewer.entities.add({
     position: Cesium.Cartesian3.fromDegrees(story.longitude, story.latitude),
+    billboard: {
+      image: NESSIE_IMAGE_URL,
+      width: imageWidth,
+      height: imageHeight,
+      pixelOffset: new Cesium.Cartesian2(0, imageOffset),
+      disableDepthTestDistance: Number.POSITIVE_INFINITY,
+    },
     point: {
       pixelSize: pointSize,
       color: Cesium.Color.WHITE,
@@ -763,6 +796,7 @@ async function runStory() {
     await waitForAnimationFrames(3);
     assertRecordingCanvasSize(story.outputWidth, story.outputHeight);
 
+    await preloadNessieImage();
     await preloadFlightPath(story);
 
     setStatus("録画中");
