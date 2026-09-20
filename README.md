@@ -37,38 +37,85 @@ WebCodecsでH.264を30fps固定タイムスタンプでエンコードし、mp4-
 
 H.264 WebCodecsに対応していないブラウザでは開始前に非対応メッセージを表示します。
 
+## 起動時の設定優先順位
+
+1. URLパラメータがない場合は、前回ブラウザで使用した設定をCookieから復元します。
+2. URLパラメータがある場合は、Cookieを復元したあと指定された項目だけURL値で上書きします。自動開始はしません。
+3. `auto=1` を付けた場合は、URL/Cookieから設定を確定したあと自動で生成し、MP4ダウンロードまで進みます。
+
+初回アクセスでCookieがない場合はネッシー / ネス湖の既定値を使用します。画面で変更した値とURLで指定した値は、次回アクセス用Cookieへ保存されます。
+
 ## URLパラメータ
 
-GitHub PagesのURLに直接パラメータを付けて、画面操作なしでMP4生成・ダウンロードを開始できます。
+通常起動で値だけ指定する例:
 
 ```text
-?height=350000&duration=5&width=1920&heightPx=1080&download=1&filename=nessie
+?name=ネッシー&lat=57.2741223&lon=-4.4849684&w=1920&h=1080&duration=5
 ```
 
-短縮形:
+自動生成・自動ダウンロード:
 
 ```text
-?w=1920&h=1080&duration=5&download=1&filename=nessie
-```
-
-次動画も指定する場合:
-
-```text
-?w=1920&h=1080&duration=5&next=https%3A%2F%2Fexample.com%2Fmovie.mp4&download=1&filename=nessie
+?name=ネッシー&lat=57.2741223&lon=-4.4849684&w=1920&h=1080&duration=5&auto=1&filename=nessie
 ```
 
 対応項目:
 
+- `name`: 地点名
+- `lat` / `latitude`: 緯度
+- `lon` / `lng` / `longitude`: 経度
 - `height`: 到着高度(m)
 - `duration`: フライト時間(秒)
 - `width` / `w`: MP4出力幅(px)
 - `heightPx` / `h`: MP4出力高さ(px)
 - `video` / `next`: フライト後に表示する動画URL
-- `filename`: ダウンロードするMP4名（拡張子省略可）
-- `download=1`: 読み込み後に自動生成・自動ダウンロード
-- `autoplay=1` / `run=1`: `download=1` と同様に自動開始
+- `filename`: ダウンロードするMP4名
+- `auto=1`: 自動生成してダウンロード
+- 互換用として `autoplay=1` / `download=1` / `run=1` も自動開始として扱います
 
-現在の遷移先はネッシー（ネス湖）に固定されています。
+## Pythonから自動生成・DL
+
+GitHub Pagesは静的サイトなので、HTTPリクエストだけではCesium/WebGL/WebCodecsの動画生成は実行できません。付属のPythonクライアントがヘッドレスChromeを操作し、Python側の呼び出しだけで生成から保存まで完結させます。
+
+準備:
+
+```bash
+pip install playwright
+playwright install chrome
+```
+
+CLI:
+
+```bash
+python scripts/download_storyglobe.py output/nessie.mp4 \
+  --name ネッシー \
+  --lat 57.2741223 \
+  --lon -4.4849684 \
+  --height 350000 \
+  --duration 5 \
+  --width 1920 \
+  --output-height 1080
+```
+
+Pythonコードから直接:
+
+```python
+from scripts.download_storyglobe import download_storyglobe
+
+path = download_storyglobe(
+    "output/nessie.mp4",
+    name="ネッシー",
+    lat=57.2741223,
+    lon=-4.4849684,
+    height=350000,
+    duration=5,
+    width=1920,
+    output_height=1080,
+)
+print(path)
+```
+
+この関数はURLへ `auto=1` を付け、ダウンロードイベントを待って指定パスへMP4を保存します。
 
 ## GitHub Pages
 
