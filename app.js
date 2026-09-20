@@ -2,25 +2,39 @@ const SATELLITE_SERVICE_URL =
   "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer";
 const BLUE_MARBLE_URL =
   "https://eoimages.gsfc.nasa.gov/images/imagerecords/57000/57730/land_ocean_ice_8192.png";
-const NESSIE_IMAGE_URL =
-  "./assets/loch-ness-monster.png?v=20260920-3";
-const NESSIE_DESTINATION = Object.freeze({
-  name: "ネッシー",
-  latitude: 57.2741223,
-  longitude: -4.4849684,
+const DEFAULT_STOPS = Object.freeze({
+  previousPrevious: Object.freeze({
+    name: "ネッシー",
+    latitude: 57.2741223,
+    longitude: -4.4849684,
+    imageUrl: "./assets/loch-ness-monster.png?v=20260920-9",
+  }),
+  previous: Object.freeze({
+    name: "チュパカブラ",
+    latitude: 18.374,
+    longitude: -65.899,
+    imageUrl: "./assets/chupacabra.png?v=20260920-9",
+  }),
+  current: Object.freeze({
+    name: "ビッグフット",
+    latitude: 41.252,
+    longitude: -123.632,
+    imageUrl: "./assets/bigfoot.png?v=20260920-9",
+  }),
 });
+const CURRENT_STORY_IMAGE_URL = DEFAULT_STOPS.current.imageUrl;
 const SETTINGS_COOKIE_NAME = "storyglobeSettings";
 const SETTINGS_COOKIE_MAX_AGE = 60 * 60 * 24 * 365;
 const DEFAULT_FORM_SETTINGS = Object.freeze({
-  previousPreviousName: NESSIE_DESTINATION.name,
-  previousPreviousLatitude: NESSIE_DESTINATION.latitude,
-  previousPreviousLongitude: NESSIE_DESTINATION.longitude,
-  previousName: NESSIE_DESTINATION.name,
-  previousLatitude: NESSIE_DESTINATION.latitude,
-  previousLongitude: NESSIE_DESTINATION.longitude,
-  name: NESSIE_DESTINATION.name,
-  latitude: NESSIE_DESTINATION.latitude,
-  longitude: NESSIE_DESTINATION.longitude,
+  previousPreviousName: DEFAULT_STOPS.previousPrevious.name,
+  previousPreviousLatitude: DEFAULT_STOPS.previousPrevious.latitude,
+  previousPreviousLongitude: DEFAULT_STOPS.previousPrevious.longitude,
+  previousName: DEFAULT_STOPS.previous.name,
+  previousLatitude: DEFAULT_STOPS.previous.latitude,
+  previousLongitude: DEFAULT_STOPS.previous.longitude,
+  name: DEFAULT_STOPS.current.name,
+  latitude: DEFAULT_STOPS.current.latitude,
+  longitude: DEFAULT_STOPS.current.longitude,
   height: 350000,
   duration: 5,
   outputWidth: 1920,
@@ -97,8 +111,8 @@ let globalImageryLayer;
 let detailImageryLayer;
 let satelliteReady = false;
 let recordingViewportState = null;
-let nessieImageReady = false;
-let nessieImageElement = null;
+let storyImageReady = false;
+let storyImageElement = null;
 let transitionWhiteAlpha = 0;
 let mp4MuxerModulePromise = null;
 let requestedFileName = "";
@@ -111,9 +125,9 @@ function wait(milliseconds) {
   return new Promise((resolve) => window.setTimeout(resolve, milliseconds));
 }
 
-function preloadNessieImage() {
-  if (nessieImageReady && nessieImageElement) {
-    return Promise.resolve(nessieImageElement);
+function preloadStoryImage() {
+  if (storyImageReady && storyImageElement) {
+    return Promise.resolve(storyImageElement);
   }
 
   return new Promise((resolve, reject) => {
@@ -130,8 +144,8 @@ function preloadNessieImage() {
           // The image is already loaded; decoding failure should not block display.
         }
 
-        nessieImageElement = image;
-        nessieImageReady = true;
+        storyImageElement = image;
+        storyImageReady = true;
         resolve(image);
       },
       { once: true }
@@ -140,12 +154,12 @@ function preloadNessieImage() {
     image.addEventListener(
       "error",
       () => {
-        reject(new Error("ネッシー画像を読み込めませんでした"));
+        reject(new Error("遷移先画像を読み込めませんでした"));
       },
       { once: true }
     );
 
-    image.src = NESSIE_IMAGE_URL;
+    image.src = CURRENT_STORY_IMAGE_URL;
   });
 }
 
@@ -488,13 +502,13 @@ function getPortalLayout(story) {
   };
 }
 
-function drawNessieCover(context, size, radius) {
-  if (!nessieImageElement) {
+function drawStoryImageCover(context, size, radius) {
+  if (!storyImageElement) {
     return;
   }
 
-  const sourceWidth = nessieImageElement.naturalWidth || 1024;
-  const sourceHeight = nessieImageElement.naturalHeight || 1536;
+  const sourceWidth = storyImageElement.naturalWidth || 1024;
+  const sourceHeight = storyImageElement.naturalHeight || 1536;
   const cropSize = Math.min(sourceWidth, sourceHeight);
   const sourceX = Math.round((sourceWidth - cropSize) / 2);
   const sourceY = 0;
@@ -506,7 +520,7 @@ function drawNessieCover(context, size, radius) {
   context.clip();
 
   context.drawImage(
-    nessieImageElement,
+    storyImageElement,
     sourceX,
     sourceY,
     cropSize,
@@ -546,14 +560,14 @@ function createPortalPhotoTexture() {
 
   const context = canvas.getContext("2d");
   if (!context) {
-    return nessieImageElement || NESSIE_IMAGE_URL;
+    return storyImageElement || CURRENT_STORY_IMAGE_URL;
   }
 
   const center = size / 2;
   const radius = size * 0.355;
 
   context.clearRect(0, 0, size, size);
-  drawNessieCover(context, size, radius);
+  drawStoryImageCover(context, size, radius);
 
   context.save();
   context.beginPath();
@@ -1711,7 +1725,7 @@ async function runStory() {
     await waitForAnimationFrames(3);
     assertRecordingCanvasSize(story.outputWidth, story.outputHeight);
 
-    await preloadNessieImage();
+    await preloadStoryImage();
     await preloadFlightPath(story);
 
     setStatus("録画中");
@@ -2086,7 +2100,7 @@ async function initialize() {
     setStatus("衛星写真の読み込みに失敗しました");
   }
 
-  await preloadNessieImage();
+  await preloadStoryImage();
 
   elements.play.addEventListener("click", runStory);
   elements.home.addEventListener("click", () => {
