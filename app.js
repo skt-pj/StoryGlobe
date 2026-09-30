@@ -43,6 +43,10 @@ const DEFAULT_FORM_SETTINGS = Object.freeze({
   filename: "",
 });
 
+const STORYGLOBE_EXPORT_MODE_PORTAL = "portal";
+const STORYGLOBE_EXPORT_MODE_FLIGHT = "flight";
+const STORYGLOBE_FLIGHT_RENDERER_VERSION = "flight-v1";
+
 const RECORD_FPS = 30;
 const KEYFRAME_INTERVAL_FRAMES = RECORD_FPS;
 const MP4_MUXER_MODULE_URL =
@@ -116,6 +120,7 @@ let storyImageElement = null;
 let transitionWhiteAlpha = 0;
 let mp4MuxerModulePromise = null;
 let requestedFileName = "";
+let requestedExportMode = STORYGLOBE_EXPORT_MODE_PORTAL;
 
 function setStatus(message) {
   elements.status.textContent = message;
@@ -262,7 +267,12 @@ function readStory() {
     outputWidth,
     outputHeight,
     videoUrl: elements.video.value.trim(),
+    exportMode: requestedExportMode,
   };
+}
+
+function isFlightOnlyExport(story) {
+  return story.exportMode === STORYGLOBE_EXPORT_MODE_FLIGHT;
 }
 
 function locationsDiffer(a, b) {
@@ -1649,10 +1659,17 @@ async function recordFlightAsMp4(
 
   try {
     await wait(PRE_ROLL_MS);
-    await flyToStory(story);
-    await animatePortalHold(story, ARRIVAL_HOLD_MS);
-    await animatePortalDive(story, WORMHOLE_DIVE_MS);
-    await wait(WHITEOUT_HOLD_MS);
+    const flightOnly = isFlightOnlyExport(story);
+    await flyToStory(story, {
+      showMarkerAtEnd: !flightOnly,
+    });
+    if (flightOnly) {
+      await wait(ARRIVAL_HOLD_MS);
+    } else {
+      await animatePortalHold(story, ARRIVAL_HOLD_MS);
+      await animatePortalDive(story, WORMHOLE_DIVE_MS);
+      await wait(WHITEOUT_HOLD_MS);
+    }
 
     captureDueFrames(performance.now());
     drawing = false;
@@ -1725,7 +1742,9 @@ async function runStory() {
     await waitForAnimationFrames(3);
     assertRecordingCanvasSize(story.outputWidth, story.outputHeight);
 
-    await preloadStoryImage();
+    if (!isFlightOnlyExport(story)) {
+      await preloadStoryImage();
+    }
     await preloadFlightPath(story);
 
     setStatus("録画中");
@@ -1883,8 +1902,21 @@ function isEnabledParameter(params, key) {
   );
 }
 
+function normalizeExportMode(value) {
+  const mode = String(value || "")
+    .trim()
+    .toLowerCase();
+  return mode === STORYGLOBE_EXPORT_MODE_FLIGHT
+    ? STORYGLOBE_EXPORT_MODE_FLIGHT
+    : STORYGLOBE_EXPORT_MODE_PORTAL;
+}
+
 function applyQueryParameters() {
   const params = new URLSearchParams(window.location.search);
+
+  requestedExportMode = normalizeExportMode(
+    params.get("exportMode")
+  );
 
   const mappings = [
     ["prev2Name", elements.previousPreviousName],
@@ -1935,6 +1967,7 @@ function applyQueryParameters() {
   return {
     autoStart,
     hasParameters: Array.from(params.keys()).length > 0,
+    exportMode: requestedExportMode,
   };
 }
 
@@ -2100,7 +2133,9 @@ async function initialize() {
     setStatus("衛星写真の読み込みに失敗しました");
   }
 
-  await preloadStoryImage();
+  if (!isFlightOnlyExport(readStory())) {
+    await preloadStoryImage();
+  }
 
   elements.play.addEventListener("click", runStory);
   elements.home.addEventListener("click", () => {
