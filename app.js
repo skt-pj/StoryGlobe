@@ -46,6 +46,12 @@ const DEFAULT_FORM_SETTINGS = Object.freeze({
 const STORYGLOBE_EXPORT_MODE_PORTAL = "portal";
 const STORYGLOBE_EXPORT_MODE_FLIGHT = "flight";
 const STORYGLOBE_FLIGHT_RENDERER_VERSION = "flight-v1";
+const STORYGLOBE_FLIGHT_PROFILE_EARTH_INTRO = "earth-intro-v1";
+const EARTH_INTRO_ORIGIN = Object.freeze({
+  name: "Tokyo Skytree",
+  latitude: 35.7100627,
+  longitude: 139.8107004,
+});
 
 const RECORD_FPS = 30;
 const KEYFRAME_INTERVAL_FRAMES = RECORD_FPS;
@@ -53,6 +59,7 @@ const MP4_MUXER_MODULE_URL =
   "./vendor/mp4-muxer.mjs?v=5.2.2";
 const PRE_ROLL_MS = 500;
 const ARRIVAL_HOLD_MS = 2000;
+const EARTH_INTRO_ARRIVAL_HOLD_MS = 300;
 const WORMHOLE_DIVE_MS = 1700;
 const WHITEOUT_HOLD_MS = 350;
 const PORTAL_TEXTURE_SIZE = 768;
@@ -61,6 +68,7 @@ const ROUTE_PRELOAD_MIN_SAMPLES = 72;
 const ROUTE_PRELOAD_MAX_SAMPLES = 180;
 const ROUTE_PRELOAD_STEP_TIMEOUT_MS = 6000;
 const ROUTE_PRELOAD_FINAL_TIMEOUT_MS = 18000;
+const EARTH_INTRO_PRELOAD_BUDGET_MS = 120000;
 const ROUTE_TILE_CACHE_SIZE = 3072;
 const TILE_QUEUE_START_GRACE_MS = 350;
 const TILE_QUEUE_QUIET_MS = 250;
@@ -121,6 +129,9 @@ let transitionWhiteAlpha = 0;
 let mp4MuxerModulePromise = null;
 let requestedFileName = "";
 let requestedExportMode = STORYGLOBE_EXPORT_MODE_PORTAL;
+let requestedFlightProfile = "";
+let requestedFlightOrigin = null;
+let requestedFlightContract = null;
 
 function setStatus(message) {
   elements.status.textContent = message;
@@ -268,11 +279,24 @@ function readStory() {
     outputHeight,
     videoUrl: elements.video.value.trim(),
     exportMode: requestedExportMode,
+    flightProfile: requestedFlightProfile,
+    flightOrigin: requestedFlightOrigin,
+    flightContract: requestedFlightContract,
   };
 }
 
 function isFlightOnlyExport(story) {
   return story.exportMode === STORYGLOBE_EXPORT_MODE_FLIGHT;
+}
+
+function isEarthIntroExport(story) {
+  return (
+    isFlightOnlyExport(story) &&
+    story.flightProfile === STORYGLOBE_FLIGHT_PROFILE_EARTH_INTRO &&
+    story.flightOrigin &&
+    Number.isFinite(story.flightOrigin.latitude) &&
+    Number.isFinite(story.flightOrigin.longitude)
+  );
 }
 
 function locationsDiffer(a, b) {
@@ -354,6 +378,18 @@ function createTrailEntity(positions, isCurrent) {
 
 function showTravelTrails(story, currentProgress = 0) {
   clearTravelTrails();
+
+  if (isEarthIntroExport(story)) {
+    const earthGeodesic = createLocationGeodesic(
+      story.flightOrigin,
+      story.current
+    );
+    currentTrailEntity = createTrailEntity(
+      buildTrailPositions(earthGeodesic, currentProgress),
+      true
+    );
+    return;
+  }
 
   if (
     locationsDiffer(
@@ -1030,6 +1066,111 @@ function getLocationCameraView(location, height) {
   };
 }
 
+function getEarthIntroTargetLookView(path, sample) {
+  const target = Cesium.Cartesian3.fromDegrees(
+    path.destination.longitude,
+    path.destination.latitude,
+    0
+  );
+  const localFrame = Cesium.Transforms.eastNorthUpToFixedFrame(target);
+  const eastColumn = Cesium.Matrix4.getColumn(
+    localFrame,
+    0,
+    new Cesium.Cartesian4()
+  );
+  const northColumn = Cesium.Matrix4.getColumn(
+    localFrame,
+    1,
+    new Cesium.Cartesian4()
+  );
+  const upColumn = Cesium.Matrix4.getColumn(
+    localFrame,
+    2,
+    new Cesium.Cartesian4()
+  );
+  const east = Cesium.Cartesian3.normalize(
+    new Cesium.Cartesian3(eastColumn.x, eastColumn.y, eastColumn.z),
+    new Cesium.Cartesian3()
+  );
+  const north = Cesium.Cartesian3.normalize(
+    new Cesium.Cartesian3(northColumn.x, northColumn.y, northColumn.z),
+    new Cesium.Cartesian3()
+  );
+  const up = Cesium.Cartesian3.normalize(
+    new Cesium.Cartesian3(upColumn.x, upColumn.y, upColumn.z),
+    new Cesium.Cartesian3()
+  );
+  const earthRadiusMeters = 6378137;
+  const latitudeRadians = Cesium.Math.toRadians(
+    path.destination.latitude
+  );
+  const eastMeters =
+    Cesium.Math.toRadians(
+      sample.location.longitude - path.destination.longitude
+    ) *
+    earthRadiusMeters *
+    Math.max(Math.cos(latitudeRadians), 1e-8);
+  const northMeters =
+    Cesium.Math.toRadians(
+      sample.location.latitude - path.destination.latitude
+    ) * earthRadiusMeters;
+  const horizontalOffset = Cesium.Cartesian3.add(
+    Cesium.Cartesian3.multiplyByScalar(
+      east,
+      eastMeters,
+      new Cesium.Cartesian3()
+    ),
+    Cesium.Cartesian3.multiplyByScalar(
+      north,
+      northMeters,
+      new Cesium.Cartesian3()
+    ),
+    new Cesium.Cartesian3()
+  );
+  const verticalOffset = Cesium.Cartesian3.multiplyByScalar(
+    up,
+    Math.max(90, sample.height),
+    new Cesium.Cartesian3()
+  );
+  const destination = Cesium.Cartesian3.add(
+    target,
+    Cesium.Cartesian3.add(
+      horizontalOffset,
+      verticalOffset,
+      new Cesium.Cartesian3()
+    ),
+    new Cesium.Cartesian3()
+  );
+  const direction = Cesium.Cartesian3.normalize(
+    Cesium.Cartesian3.subtract(
+      target,
+      destination,
+      new Cesium.Cartesian3()
+    ),
+    new Cesium.Cartesian3()
+  );
+  const right = Cesium.Cartesian3.cross(
+    direction,
+    up,
+    new Cesium.Cartesian3()
+  );
+  if (Cesium.Cartesian3.magnitudeSquared(right) < 1e-10) {
+    Cesium.Cartesian3.clone(east, right);
+  } else {
+    Cesium.Cartesian3.normalize(right, right);
+  }
+  const viewUp = Cesium.Cartesian3.normalize(
+    Cesium.Cartesian3.cross(
+      right,
+      direction,
+      new Cesium.Cartesian3()
+    ),
+    new Cesium.Cartesian3()
+  );
+
+  return { target, destination, direction, up: viewUp };
+}
+
 function getNadirCameraView(story) {
   return getLocationCameraView(
     story.current,
@@ -1037,8 +1178,192 @@ function getNadirCameraView(story) {
   );
 }
 
+function offsetEarthLocation(location, northMeters, eastMeters) {
+  const earthRadiusMeters = 6378137;
+  const latitudeRadians = Cesium.Math.toRadians(location.latitude);
+  const latitude =
+    location.latitude +
+    Cesium.Math.toDegrees(northMeters / earthRadiusMeters);
+  const longitude =
+    location.longitude +
+    Cesium.Math.toDegrees(
+      eastMeters /
+        (earthRadiusMeters * Math.max(Math.cos(latitudeRadians), 1e-8))
+    );
+
+  return {
+    name: location.name,
+    latitude,
+    longitude,
+  };
+}
+
+function sampleEarthIntroPath(path, progress) {
+  const clamped = Cesium.Math.clamp(progress, 0, 1);
+  const phases = path.contract?.phases || [];
+  const phase = (name) =>
+    phases.find((candidate) => candidate.name === name) || null;
+  const closeStart = phase("close_start_hold");
+  const ascent = phase("modest_ascent");
+  const reveal = phase("wider_panel_reveal");
+  const travel = phase("continuous_focus_flight");
+  const settle = phase("focus_panel_settle");
+  const orbit = phase("full_360_orbit");
+  const dive = phase("through_panel_dive");
+  const fade = phase("storymovie_fade");
+  const duration = path.durationSeconds;
+  const seconds = clamped * duration;
+  const riseEnd = ascent?.end_seconds ?? duration * 0.18;
+  const travelStart = reveal?.start_seconds ?? riseEnd;
+  const travelEnd = travel?.end_seconds ?? duration * 0.49;
+  const orbitStart = orbit?.start_seconds ?? duration * 0.55;
+  const orbitEnd = orbit?.end_seconds ?? duration * 0.82;
+  const diveStart = dive?.start_seconds ?? orbitEnd;
+  const fadeStart = fade?.start_seconds ?? duration * 0.95;
+
+  if (seconds <= (closeStart?.end_seconds ?? 1.2)) {
+    return {
+      location: path.origin,
+      height: path.riseStartHeight,
+      trailProgress: 0,
+      fadeAlpha: 0,
+      phase: "close_start_hold",
+    };
+  }
+
+  if (seconds < riseEnd) {
+    const local = Cesium.Math.clamp(
+      (seconds - (ascent?.start_seconds ?? 1.2)) /
+        Math.max(0.001, (ascent?.end_seconds ?? riseEnd) - (ascent?.start_seconds ?? 1.2)),
+      0,
+      1
+    );
+    const eased = Cesium.EasingFunction.CUBIC_IN_OUT(local);
+    return {
+      location: path.origin,
+      height:
+        path.riseStartHeight +
+        (path.riseHeight - path.riseStartHeight) * eased,
+      trailProgress: 0,
+      fadeAlpha: 0,
+      phase: "rise",
+    };
+  }
+
+  if (seconds < travelEnd) {
+    const local = Cesium.Math.clamp(
+      (seconds - travelStart) / Math.max(0.001, travelEnd - travelStart),
+      0,
+      1
+    );
+    const eased = Cesium.EasingFunction.CUBIC_IN_OUT(local);
+    const surface = path.geodesic.interpolateUsingFraction(eased);
+    const arc = Math.pow(Math.sin(Math.PI * eased), 0.82);
+    return {
+      location: {
+        name: path.destination.name,
+        latitude: Cesium.Math.toDegrees(surface.latitude),
+        longitude: Cesium.Math.toDegrees(surface.longitude),
+      },
+      height:
+        path.baseHeight +
+        (path.peakHeight - path.baseHeight) * arc,
+      trailProgress: eased,
+      fadeAlpha: 0,
+      phase: "travel",
+    };
+  }
+
+  if (seconds < orbitStart) {
+    return {
+      location: path.destination,
+      height: path.settleHeight,
+      trailProgress: 1,
+      fadeAlpha: 0,
+      phase: "focus_panel_settle",
+    };
+  }
+
+  if (seconds < orbitEnd) {
+    const local = Cesium.Math.clamp(
+      (seconds - orbitStart) / Math.max(0.001, orbitEnd - orbitStart),
+      0,
+      1
+    );
+    const bearing = local * Math.PI * 2;
+    const radius = path.orbitRadius;
+    return {
+      location: offsetEarthLocation(
+        path.destination,
+        Math.cos(bearing) * radius,
+        Math.sin(bearing) * radius
+      ),
+      height: path.orbitHeight,
+      trailProgress: 1,
+      fadeAlpha: 0,
+      phase: "orbit",
+    };
+  }
+
+  const local = Cesium.Math.clamp(
+    (seconds - diveStart) / Math.max(0.001, duration - diveStart),
+    0,
+    1
+  );
+  const eased = Cesium.EasingFunction.CUBIC_IN_OUT(local);
+  const radius = path.orbitRadius * (1 - eased);
+  const location = offsetEarthLocation(
+    path.destination,
+    radius,
+    -radius * 0.35
+  );
+  const fadeProgress = Cesium.Math.clamp(
+    (seconds - fadeStart) / Math.max(0.001, duration - fadeStart),
+    0,
+    1
+  );
+  const fadeEased = 1 - Math.pow(1 - fadeProgress, 3);
+  return {
+    location,
+    height:
+      path.diveStartHeight +
+      (path.diveEndHeight - path.diveStartHeight) * eased,
+    trailProgress: 1,
+    fadeAlpha: fadeEased,
+    phase: seconds >= fadeStart ? "fade" : "dive",
+  };
+}
+
 function createFlightPath(story) {
   const baseHeight = story.height;
+
+  if (isEarthIntroExport(story)) {
+    const geodesic = createLocationGeodesic(
+      story.flightOrigin,
+      story.current
+    );
+    const peakHeight = Math.min(
+      MAX_FLIGHT_PEAK_HEIGHT,
+      Math.max(baseHeight * 4, baseHeight + geodesic.surfaceDistance * 0.22)
+    );
+    return {
+      profile: STORYGLOBE_FLIGHT_PROFILE_EARTH_INTRO,
+      geodesic,
+      origin: story.flightOrigin,
+      destination: story.current,
+      contract: story.flightContract,
+      durationSeconds: story.duration,
+      baseHeight,
+      peakHeight,
+      riseStartHeight: story.flightContract?.origin_camera?.start_altitude_m || 700,
+      riseHeight: story.flightContract?.origin_camera?.ascent_altitude_m || 1200,
+      settleHeight: Math.max(baseHeight * 0.62, 120000),
+      orbitHeight: Math.max(350, baseHeight * 0.002),
+      orbitRadius: story.flightContract?.orbit?.radius_m || 500,
+      diveStartHeight: Math.max(350, baseHeight * 0.002),
+      diveEndHeight: 120,
+    };
+  }
 
   if (!locationsDiffer(story.previous, story.current)) {
     return {
@@ -1071,6 +1396,28 @@ function createFlightPath(story) {
 
 function setCameraFlightProgress(path, progress) {
   const clamped = Cesium.Math.clamp(progress, 0, 1);
+
+  if (path.profile === STORYGLOBE_FLIGHT_PROFILE_EARTH_INTRO) {
+    const sample = sampleEarthIntroPath(path, clamped);
+    const view =
+      sample.phase === "orbit" ||
+      sample.phase === "dive" ||
+      sample.phase === "fade"
+        ? getEarthIntroTargetLookView(path, sample)
+        : getLocationCameraView(sample.location, sample.height);
+    viewer.camera.setView({
+      destination: view.destination,
+      orientation: {
+        direction: view.direction,
+        up: view.up,
+      },
+    });
+    setTransitionWhiteout(sample.fadeAlpha);
+    updateImageryBlend();
+    viewer.scene.requestRender();
+    return sample.trailProgress;
+  }
+
   const eased = Cesium.EasingFunction.CUBIC_IN_OUT(clamped);
   const surface = path.geodesic
     ? path.geodesic.interpolateUsingFraction(eased)
@@ -1137,14 +1484,16 @@ function flyToStory(
         return;
       }
 
-      const view = getNadirCameraView(story);
-      viewer.camera.setView({
-        destination: view.destination,
-        orientation: {
-          direction: view.direction,
-          up: view.up,
-        },
-      });
+      if (!isEarthIntroExport(story)) {
+        const view = getNadirCameraView(story);
+        viewer.camera.setView({
+          destination: view.destination,
+          orientation: {
+            direction: view.direction,
+            up: view.up,
+          },
+        });
+      }
       updateCurrentTrail(path, 1);
 
       if (showMarkerAtEnd) {
@@ -1329,6 +1678,8 @@ function waitForCurrentViewTiles(timeoutMs) {
         timedOut,
         sawLoading,
         lastQueueLength,
+        elapsedMs: performance.now() - startedAt,
+        tilesLoaded: globe.tilesLoaded,
       });
     }
 
@@ -1373,6 +1724,52 @@ function preloadSampleView(path, progress) {
   setCameraFlightProgress(path, progress);
 }
 
+function getEarthIntroPreloadSamples(path) {
+  const phases = path.contract?.phases || [];
+  const samples = new Map();
+  const duration = Math.max(0.001, path.durationSeconds);
+
+  function add(label, seconds) {
+    const clampedSeconds = Cesium.Math.clamp(seconds, 0, duration);
+    const key = clampedSeconds.toFixed(6);
+    if (!samples.has(key)) {
+      samples.set(key, {
+        label,
+        progress: clampedSeconds / duration,
+      });
+    }
+  }
+
+  for (const phase of phases) {
+    add(phase.name + ":start", Number(phase.start_seconds));
+    add(phase.name + ":end", Number(phase.end_seconds));
+  }
+
+  for (const [name, fraction] of [
+    ["continuous_focus_flight", 0.5],
+    ["full_360_orbit", 0.25],
+    ["full_360_orbit", 0.5],
+    ["full_360_orbit", 0.75],
+    ["through_panel_dive", 0.5],
+    ["storymovie_fade", 0.5],
+  ]) {
+    const phase = phases.find((candidate) => candidate.name === name);
+    if (!phase) {
+      continue;
+    }
+    const start = Number(phase.start_seconds);
+    const end = Number(phase.end_seconds);
+    add(
+      name + ":representative-" + fraction,
+      start + (end - start) * fraction
+    );
+  }
+
+  return Array.from(samples.values()).sort(
+    (left, right) => left.progress - right.progress
+  );
+}
+
 function setPreloadOverlay(visible, text = "経路を事前読み込み中") {
   elements.preloadText.textContent = text;
   elements.preloadOverlay.classList.toggle("visible", visible);
@@ -1391,6 +1788,10 @@ async function preloadFlightPath(story) {
   const previousCacheSize = globe.tileCacheSize;
   const previousPreloadSiblings = globe.preloadSiblings;
   const path = createFlightPath(story);
+  const earthIntro = isEarthIntroExport(story);
+  const earthIntroSamples = earthIntro
+    ? getEarthIntroPreloadSamples(path)
+    : null;
   const sampleCount = Math.min(
     ROUTE_PRELOAD_MAX_SAMPLES,
     Math.max(
@@ -1400,6 +1801,7 @@ async function preloadFlightPath(story) {
       )
     )
   );
+  const preloadStartedAt = performance.now();
 
   globe.tileCacheSize = Math.max(
     previousCacheSize,
@@ -1408,37 +1810,100 @@ async function preloadFlightPath(story) {
   globe.preloadSiblings = false;
 
   try {
-    for (let index = 0; index < sampleCount; index += 1) {
-      const progress = index / (sampleCount - 1);
+    const samples = earthIntro
+      ? earthIntroSamples
+      : Array.from({ length: sampleCount }, (_, index) => ({
+          label: "route-sample-" + (index + 1),
+          progress: index / (sampleCount - 1),
+        }));
+
+    for (let index = 0; index < samples.length; index += 1) {
+      const sample = samples[index];
+      const progress = sample.progress;
       const percent = Math.round(progress * 100);
 
       setPreloadOverlay(
         true,
-        "経路を事前読み込み中 " + percent + "%"
+        "経路を事前読み込み中 " +
+          sample.label +
+          " " +
+          percent +
+          "%"
       );
       preloadSampleView(path, progress);
 
       await waitForAnimationFrames(2);
-      await waitForCurrentViewTiles(
-        ROUTE_PRELOAD_STEP_TIMEOUT_MS
+      const elapsed = performance.now() - preloadStartedAt;
+      const remaining = earthIntro
+        ? EARTH_INTRO_PRELOAD_BUDGET_MS - elapsed
+        : ROUTE_PRELOAD_STEP_TIMEOUT_MS;
+      if (earthIntro && remaining <= 0) {
+        throw new Error(
+          "衛星画像の経路読み込み予算を超過しました " +
+            sample.label
+        );
+      }
+      const sampleTiles = await waitForCurrentViewTiles(
+        earthIntro
+          ? Math.min(ROUTE_PRELOAD_STEP_TIMEOUT_MS, remaining)
+          : ROUTE_PRELOAD_STEP_TIMEOUT_MS
       );
+      if (
+        earthIntro &&
+        (sampleTiles.timedOut || sampleTiles.lastQueueLength > 0)
+      ) {
+        throw new Error(
+          "衛星画像の経路サンプルを読み込めませんでした " +
+            sample.label +
+            " queue=" +
+            sampleTiles.lastQueueLength +
+            " elapsed_ms=" +
+            Math.round(sampleTiles.elapsedMs)
+        );
+      }
     }
 
-    const finalView = getNadirCameraView(story);
-    viewer.camera.setView({
-      destination: finalView.destination,
-      orientation: {
-        direction: finalView.direction,
-        up: finalView.up,
-      },
-    });
+    if (earthIntro) {
+      preloadSampleView(path, 1);
+    } else {
+      const finalView = getNadirCameraView(story);
+      viewer.camera.setView({
+        destination: finalView.destination,
+        orientation: {
+          direction: finalView.direction,
+          up: finalView.up,
+        },
+      });
+    }
     updateImageryBlend();
 
     setPreloadOverlay(true, "到着地点を読み込み中");
     await waitForAnimationFrames(3);
-    await waitForCurrentViewTiles(
-      ROUTE_PRELOAD_FINAL_TIMEOUT_MS
+    const finalRemaining = earthIntro
+      ? EARTH_INTRO_PRELOAD_BUDGET_MS -
+        (performance.now() - preloadStartedAt)
+      : ROUTE_PRELOAD_FINAL_TIMEOUT_MS;
+    if (earthIntro && finalRemaining <= 0) {
+      throw new Error(
+        "衛星画像の経路読み込み予算を超過しました final"
+      );
+    }
+    const finalTiles = await waitForCurrentViewTiles(
+      earthIntro
+        ? Math.min(ROUTE_PRELOAD_FINAL_TIMEOUT_MS, finalRemaining)
+        : ROUTE_PRELOAD_FINAL_TIMEOUT_MS
     );
+    if (
+      earthIntro &&
+      (finalTiles.timedOut || finalTiles.lastQueueLength > 0)
+    ) {
+      throw new Error(
+        "衛星画像の到着地点を読み込めませんでした queue=" +
+          finalTiles.lastQueueLength +
+          " elapsed_ms=" +
+          Math.round(finalTiles.elapsedMs)
+      );
+    }
 
     setHomeView(false, story);
     updateImageryBlend();
@@ -1535,7 +2000,7 @@ async function recordFlightAsMp4(
 
   const context = outputCanvas.getContext("2d", {
     alpha: false,
-    desynchronized: true,
+    desynchronized: false,
   });
   if (!context) {
     throw new Error("録画用Canvasを作成できませんでした");
@@ -1664,7 +2129,11 @@ async function recordFlightAsMp4(
       showMarkerAtEnd: !flightOnly,
     });
     if (flightOnly) {
-      await wait(ARRIVAL_HOLD_MS);
+      await wait(
+        isEarthIntroExport(story)
+          ? EARTH_INTRO_ARRIVAL_HOLD_MS
+          : ARRIVAL_HOLD_MS
+      );
     } else {
       await animatePortalHold(story, ARRIVAL_HOLD_MS);
       await animatePortalDive(story, WORMHOLE_DIVE_MS);
@@ -1911,12 +2380,75 @@ function normalizeExportMode(value) {
     : STORYGLOBE_EXPORT_MODE_PORTAL;
 }
 
+function normalizeFlightProfile(value) {
+  const profile = String(value || "")
+    .trim()
+    .toLowerCase();
+  return profile === STORYGLOBE_FLIGHT_PROFILE_EARTH_INTRO
+    ? STORYGLOBE_FLIGHT_PROFILE_EARTH_INTRO
+    : "";
+}
+
 function applyQueryParameters() {
   const params = new URLSearchParams(window.location.search);
 
   requestedExportMode = normalizeExportMode(
     params.get("exportMode")
   );
+  requestedFlightProfile = normalizeFlightProfile(
+    params.get("flightProfile")
+  );
+  requestedFlightOrigin = null;
+  requestedFlightContract = null;
+  if (requestedFlightProfile) {
+    const originName =
+      params.get("flightOriginName")?.trim() ||
+      EARTH_INTRO_ORIGIN.name;
+    const originLatitude = Number(
+      params.get("flightOriginLat")
+    );
+    const originLongitude = Number(
+      params.get("flightOriginLon")
+    );
+    requestedFlightOrigin = {
+      name: originName,
+      latitude: Number.isFinite(originLatitude)
+        ? originLatitude
+        : EARTH_INTRO_ORIGIN.latitude,
+      longitude: Number.isFinite(originLongitude)
+        ? originLongitude
+        : EARTH_INTRO_ORIGIN.longitude,
+    };
+    try {
+      const phases = JSON.parse(params.get("flightPhases") || "[]");
+      if (Array.isArray(phases) && phases.length > 0) {
+        requestedFlightContract = {
+          profileVersion:
+            params.get("flightProfileVersion") || "",
+          phases,
+          reveal: {
+            latitude: Number(params.get("flightRevealLat")),
+            longitude: Number(params.get("flightRevealLon")),
+            viewRangeM: Number(params.get("flightRevealRangeM")),
+          },
+          focus: {
+            viewRangeM: Number(params.get("flightFocusRangeM")),
+          },
+          orbit: {
+            radiusM: Number(params.get("flightOrbitRadiusM")),
+            sampleCount: Number(params.get("flightOrbitSamples")),
+          },
+          dive: {
+            frontOffsetM: Number(params.get("flightDiveFrontM")),
+            centerOffsetM: Number(params.get("flightDiveCenterM")),
+            behindOffsetM: Number(params.get("flightDiveBehindM")),
+          },
+        };
+      }
+    } catch {
+      requestedFlightContract = null;
+    }
+  }
 
   const mappings = [
     ["prev2Name", elements.previousPreviousName],
@@ -1968,6 +2500,7 @@ function applyQueryParameters() {
     autoStart,
     hasParameters: Array.from(params.keys()).length > 0,
     exportMode: requestedExportMode,
+    flightProfile: requestedFlightProfile,
   };
 }
 
@@ -2019,25 +2552,27 @@ function updateImageryBlend() {
 }
 
 async function addSatelliteImagery() {
-  try {
-    const globalProvider = Cesium.SingleTileImageryProvider.fromUrl
-      ? await Cesium.SingleTileImageryProvider.fromUrl(
-          BLUE_MARBLE_URL,
-          { credit: "NASA Visible Earth / Blue Marble" }
-        )
-      : new Cesium.SingleTileImageryProvider({
-          url: BLUE_MARBLE_URL,
-          credit: "NASA Visible Earth / Blue Marble",
-        });
+  if (!isEarthIntroExport(readStory())) {
+    try {
+      const globalProvider = Cesium.SingleTileImageryProvider.fromUrl
+        ? await Cesium.SingleTileImageryProvider.fromUrl(
+            BLUE_MARBLE_URL,
+            { credit: "NASA Visible Earth / Blue Marble" }
+          )
+        : new Cesium.SingleTileImageryProvider({
+            url: BLUE_MARBLE_URL,
+            credit: "NASA Visible Earth / Blue Marble",
+          });
 
-    globalImageryLayer =
-      viewer.imageryLayers.addImageryProvider(globalProvider);
-    globalImageryLayer.brightness = 1.0;
-    globalImageryLayer.contrast = 1.0;
-    globalImageryLayer.saturation = 1.0;
-    globalImageryLayer.gamma = 1.0;
-  } catch (error) {
-    console.warn("Blue Marble load failed:", error);
+      globalImageryLayer =
+        viewer.imageryLayers.addImageryProvider(globalProvider);
+      globalImageryLayer.brightness = 1.0;
+      globalImageryLayer.contrast = 1.0;
+      globalImageryLayer.saturation = 1.0;
+      globalImageryLayer.gamma = 1.0;
+    } catch (error) {
+      console.warn("Blue Marble load failed:", error);
+    }
   }
 
   const detailProvider =
