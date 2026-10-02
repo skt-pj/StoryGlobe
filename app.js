@@ -67,6 +67,10 @@ const ROUTE_PRELOAD_SAMPLES_PER_SECOND = 18;
 const ROUTE_PRELOAD_MIN_SAMPLES = 72;
 const ROUTE_PRELOAD_MAX_SAMPLES = 180;
 const ROUTE_PRELOAD_STEP_TIMEOUT_MS = 6000;
+// Earth-intro imagery can require a cold-start tile pyramid load at the
+// Tokyo origin. Keep the longer wait opt-in to this profile; legacy flight
+// exports retain the established per-sample timeout above.
+const EARTH_INTRO_PRELOAD_STEP_TIMEOUT_MS = 45000;
 const ROUTE_PRELOAD_FINAL_TIMEOUT_MS = 18000;
 const EARTH_INTRO_PRELOAD_BUDGET_MS = 120000;
 const ROUTE_TILE_CACHE_SIZE = 3072;
@@ -1845,7 +1849,7 @@ async function preloadFlightPath(story) {
       }
       const sampleTiles = await waitForCurrentViewTiles(
         earthIntro
-          ? Math.min(ROUTE_PRELOAD_STEP_TIMEOUT_MS, remaining)
+          ? Math.min(EARTH_INTRO_PRELOAD_STEP_TIMEOUT_MS, remaining)
           : ROUTE_PRELOAD_STEP_TIMEOUT_MS
       );
       if (
