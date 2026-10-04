@@ -1218,9 +1218,11 @@ function sampleEarthIntroPath(path, progress) {
   const duration = path.durationSeconds;
   const seconds = clamped * duration;
   const riseEnd = ascent?.end_seconds ?? duration * 0.18;
-  const travelStart = reveal?.start_seconds ?? riseEnd;
+  const revealStart = reveal?.start_seconds ?? riseEnd;
+  const travelStart = travel?.start_seconds ?? reveal?.end_seconds ?? riseEnd;
   const travelEnd = travel?.end_seconds ?? duration * 0.49;
-  const orbitStart = orbit?.start_seconds ?? duration * 0.55;
+  const settleStart = settle?.start_seconds ?? travelEnd;
+  const orbitStart = orbit?.start_seconds ?? settle?.end_seconds ?? duration * 0.55;
   const orbitEnd = orbit?.end_seconds ?? duration * 0.82;
   const diveStart = dive?.start_seconds ?? orbitEnd;
   const fadeStart = fade?.start_seconds ?? duration * 0.95;
@@ -1254,6 +1256,25 @@ function sampleEarthIntroPath(path, progress) {
     };
   }
 
+  if (seconds < travelStart) {
+    const local = Cesium.Math.clamp(
+      (seconds - revealStart) /
+        Math.max(0.001, travelStart - revealStart),
+      0,
+      1
+    );
+    const eased = Cesium.EasingFunction.CUBIC_IN_OUT(local);
+    return {
+      location: path.origin,
+      height:
+        path.riseHeight +
+        (path.settleEntryHeight - path.riseHeight) * eased,
+      trailProgress: 0,
+      fadeAlpha: 0,
+      phase: "reveal",
+    };
+  }
+
   if (seconds < travelEnd) {
     const local = Cesium.Math.clamp(
       (seconds - travelStart) / Math.max(0.001, travelEnd - travelStart),
@@ -1270,8 +1291,8 @@ function sampleEarthIntroPath(path, progress) {
         longitude: Cesium.Math.toDegrees(surface.longitude),
       },
       height:
-        path.baseHeight +
-        (path.peakHeight - path.baseHeight) * arc,
+        path.settleEntryHeight +
+        (path.peakHeight - path.settleEntryHeight) * arc,
       trailProgress: eased,
       fadeAlpha: 0,
       phase: "travel",
@@ -1279,12 +1300,32 @@ function sampleEarthIntroPath(path, progress) {
   }
 
   if (seconds < orbitStart) {
+    const local = Cesium.Math.clamp(
+      (seconds - settleStart) /
+        Math.max(0.001, orbitStart - settleStart),
+      0,
+      1
+    );
+    const eased = Cesium.EasingFunction.CUBIC_IN_OUT(local);
+    const startHeight = Math.max(
+      path.orbitHeight,
+      path.settleEntryHeight
+    );
+    const endHeight = Math.max(90, path.orbitHeight);
+    const height = Math.exp(
+      Math.log(startHeight) +
+      (Math.log(endHeight) - Math.log(startHeight)) * eased
+    );
     return {
-      location: path.destination,
-      height: path.settleHeight,
+      location: offsetEarthLocation(
+        path.destination,
+        path.orbitRadius * eased,
+        0
+      ),
+      height,
       trailProgress: 1,
       fadeAlpha: 0,
-      phase: "focus_panel_settle",
+      phase: "orbit_transition",
     };
   }
 
@@ -1361,8 +1402,11 @@ function createFlightPath(story) {
       peakHeight,
       riseStartHeight: story.flightContract?.origin_camera?.start_altitude_m || 700,
       riseHeight: story.flightContract?.origin_camera?.ascent_altitude_m || 1200,
-      settleHeight: Math.max(baseHeight * 0.62, 120000),
       orbitHeight: Math.max(350, baseHeight * 0.002),
+      settleEntryHeight: Math.max(
+        Math.max(350, baseHeight * 0.002) * 12,
+        Math.min(baseHeight * 0.06, 30000)
+      ),
       orbitRadius: story.flightContract?.orbit?.radius_m || 500,
       diveStartHeight: Math.max(350, baseHeight * 0.002),
       diveEndHeight: 120,
@@ -1405,6 +1449,7 @@ function setCameraFlightProgress(path, progress) {
     const sample = sampleEarthIntroPath(path, clamped);
     const view =
       sample.phase === "orbit" ||
+      sample.phase === "orbit_transition" ||
       sample.phase === "dive" ||
       sample.phase === "fade"
         ? getEarthIntroTargetLookView(path, sample)
