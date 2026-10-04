@@ -18,6 +18,9 @@ const context = {
       toDegrees(value) {
         return value * 180 / Math.PI;
       },
+      toRadians(value) {
+        return value * Math.PI / 180;
+      },
     },
     EasingFunction: {
       CUBIC_IN_OUT(value) {
@@ -46,9 +49,9 @@ const phases = [
   ["wider_panel_reveal", 2.8, 4.9],
   ["continuous_focus_flight", 4.9, 10.9],
   ["focus_panel_settle", 10.9, 13.9],
-  ["full_360_orbit", 13.9, 25.9],
-  ["through_panel_dive", 25.9, 27.8],
-  ["storymovie_fade", 27.8, 28.6],
+  ["full_360_orbit", 13.9, 16.9],
+  ["through_panel_dive", 16.9, 18.8],
+  ["storymovie_fade", 18.8, 19.6],
 ].map(([name, start_seconds, end_seconds]) => ({
   name,
   start_seconds,
@@ -57,10 +60,10 @@ const phases = [
 
 function makePath() {
   return {
-    durationSeconds: 28.6,
+    durationSeconds: 19.6,
     origin: { name: "origin", latitude: 35, longitude: 139 },
     destination: { name: "destination", latitude: 57, longitude: -4 },
-    contract: { phases },
+    contract: { phases, orbit: { headingDeltaDegrees: 9 } },
     baseHeight: 350000,
     peakHeight: 1400000,
     riseStartHeight: 700,
@@ -84,7 +87,7 @@ function makePath() {
 }
 
 function at(seconds) {
-  return context.sampleEarthIntroPath(makePath(), seconds / 28.6);
+  return context.sampleEarthIntroPath(makePath(), seconds / 19.6);
 }
 
 test("travel starts at the declared travel phase and reveal joins continuously", () => {
@@ -111,19 +114,20 @@ test("settle joins orbit in position and height while descending", () => {
   assert.ok(Math.abs(settleEnd.location.longitude - orbitStart.location.longitude) < 1e-5);
 });
 
-test("orbit keeps one full turn over the declared orbit duration", () => {
+test("orbit stays within the gentle three-degree-per-second contract", () => {
   const start = at(13.9 + 1e-4);
-  const quarter = at(13.9 + 3.0);
-  const end = at(25.9 - 1e-4);
+  const middle = at(13.9 + 1.5);
+  const end = at(16.9 - 1e-4);
   const bearing = (sample) =>
     Math.atan2(
       sample.location.longitude - makePath().destination.longitude,
       sample.location.latitude - makePath().destination.latitude,
     );
-  const quarterTurn = (bearing(quarter) - bearing(start) + Math.PI * 2) % (Math.PI * 2);
-  const fullTurn = (bearing(end) - bearing(start) + Math.PI * 2) % (Math.PI * 2);
-  assert.ok(Math.abs(quarterTurn - Math.PI / 2) < 0.01);
-  assert.ok(fullTurn > Math.PI * 1.99);
+  const middleTurn = bearing(middle) - bearing(start);
+  const totalTurn = bearing(end) - bearing(start);
+  assert.ok(Math.abs(middleTurn - Math.PI / 40) < 0.01);
+  assert.ok(Math.abs(totalTurn - Math.PI / 20) < 0.01);
+  assert.ok((totalTurn * 180 / Math.PI) / 3 <= 3.01);
 });
 
 test("camera selection uses the target-look view during orbit transition", () => {

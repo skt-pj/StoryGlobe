@@ -1224,6 +1224,15 @@ function sampleEarthIntroPath(path, progress) {
   const settleStart = settle?.start_seconds ?? travelEnd;
   const orbitStart = orbit?.start_seconds ?? settle?.end_seconds ?? duration * 0.55;
   const orbitEnd = orbit?.end_seconds ?? duration * 0.82;
+  const requestedHeadingDelta = Number(
+    orbit?.heading_delta_degrees ??
+      orbit?.headingDeltaDegrees ??
+      path.contract?.orbit?.headingDeltaDegrees ??
+      9
+  );
+  const headingDeltaDegrees = Number.isFinite(requestedHeadingDelta)
+    ? requestedHeadingDelta
+    : 9;
   const diveStart = dive?.start_seconds ?? orbitEnd;
   const fadeStart = fade?.start_seconds ?? duration * 0.95;
 
@@ -1335,7 +1344,7 @@ function sampleEarthIntroPath(path, progress) {
       0,
       1
     );
-    const bearing = local * Math.PI * 2;
+    const bearing = Cesium.Math.toRadians(headingDeltaDegrees * local);
     const radius = path.orbitRadius;
     return {
       location: offsetEarthLocation(
@@ -2486,6 +2495,9 @@ function applyQueryParameters() {
           orbit: {
             radiusM: Number(params.get("flightOrbitRadiusM")),
             sampleCount: Number(params.get("flightOrbitSamples")),
+            headingDeltaDegrees: Number(
+              params.get("flightOrbitHeadingDeltaDegrees")
+            ),
           },
           dive: {
             frontOffsetM: Number(params.get("flightDiveFrontM")),
