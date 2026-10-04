@@ -69,10 +69,10 @@ function makePath() {
     riseStartHeight: 700,
     riseHeight: 1200,
     settleEntryHeight: 21000,
-    orbitHeight: 700,
+    orbitHeight: 21000,
     orbitRadius: 500,
-    diveStartHeight: 700,
-    diveEndHeight: 120,
+    diveStartHeight: 21000,
+    diveEndHeight: 21000,
     geodesic: {
       interpolateUsingFraction(fraction) {
         return {
@@ -99,7 +99,7 @@ test("travel starts at the declared travel phase and reveal joins continuously",
   assert.ok(Math.abs(start.height - before.height) < 100);
 });
 
-test("settle joins orbit in position and height while descending", () => {
+test("settle joins orbit at the generic regional overview height", () => {
   const settleStart = at(10.9);
   const settleMiddle = at(12.4);
   const settleEnd = at(13.9 - 1e-4);
@@ -107,11 +107,18 @@ test("settle joins orbit in position and height while descending", () => {
   assert.equal(settleStart.phase, "orbit_transition");
   assert.equal(settleEnd.phase, "orbit_transition");
   assert.equal(orbitStart.phase, "orbit");
-  assert.ok(settleStart.height > settleMiddle.height);
-  assert.ok(settleMiddle.height > settleEnd.height);
+  assert.ok(settleStart.height >= settleMiddle.height - 1);
+  assert.ok(settleMiddle.height >= settleEnd.height - 1);
+  assert.ok(settleEnd.height >= 20000);
   assert.ok(Math.abs(settleEnd.height - orbitStart.height) < 1);
   assert.ok(Math.abs(settleEnd.location.latitude - orbitStart.location.latitude) < 1e-5);
   assert.ok(Math.abs(settleEnd.location.longitude - orbitStart.location.longitude) < 1e-5);
+});
+
+test("dive keeps the regional overview altitude instead of a low close-up", () => {
+  const dive = at(17.8);
+  assert.equal(dive.phase, "dive");
+  assert.ok(dive.height >= 20000);
 });
 
 test("orbit stays within the gentle three-degree-per-second contract", () => {

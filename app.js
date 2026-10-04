@@ -1400,6 +1400,14 @@ function createFlightPath(story) {
       MAX_FLIGHT_PEAK_HEIGHT,
       Math.max(baseHeight * 4, baseHeight + geodesic.surfaceDistance * 0.22)
     );
+    // The existing settle entry is the generic regional overview height. Keep
+    // the focus/orbit/dive phases at that height so a close-up view cannot
+    // collapse onto a dark lake or other undifferentiated surface.
+    const settleEntryHeight = Math.max(
+      Math.max(350, baseHeight * 0.002) * 12,
+      Math.min(baseHeight * 0.06, 30000)
+    );
+    const focusOverviewHeight = Math.max(1000, settleEntryHeight);
     return {
       profile: STORYGLOBE_FLIGHT_PROFILE_EARTH_INTRO,
       geodesic,
@@ -1411,14 +1419,11 @@ function createFlightPath(story) {
       peakHeight,
       riseStartHeight: story.flightContract?.origin_camera?.start_altitude_m || 700,
       riseHeight: story.flightContract?.origin_camera?.ascent_altitude_m || 1200,
-      orbitHeight: Math.max(350, baseHeight * 0.002),
-      settleEntryHeight: Math.max(
-        Math.max(350, baseHeight * 0.002) * 12,
-        Math.min(baseHeight * 0.06, 30000)
-      ),
+      orbitHeight: focusOverviewHeight,
+      settleEntryHeight,
       orbitRadius: story.flightContract?.orbit?.radius_m || 500,
-      diveStartHeight: Math.max(350, baseHeight * 0.002),
-      diveEndHeight: 120,
+      diveStartHeight: focusOverviewHeight,
+      diveEndHeight: focusOverviewHeight,
     };
   }
 
